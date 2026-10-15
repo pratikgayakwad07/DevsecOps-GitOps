@@ -409,6 +409,16 @@ jobs:
             fi
           fi
 
+          actual_cidr="$(aws eks describe-cluster \
+            --name blog-prod-eks \
+            --region "$AWS_REGION" \
+            --query 'cluster.resourcesVpcConfig.publicAccessCidrs[0]' \
+            --output text)"
+          if [[ "$actual_cidr" != "$runner_cidr" ]]; then
+            echo "EKS API access is not restricted to the active runner."
+            exit 1
+          fi
+
       - name: Configure kubectl
         run: aws eks update-kubeconfig --name blog-prod-eks --region "$AWS_REGION"
 
