@@ -1,0 +1,50 @@
+apiVersion: apps/v1
+kind: Deployment
+
+metadata:
+  name: frontend
+  namespace: blog-app
+
+spec:
+
+  replicas: 2
+
+  selector:
+    matchLabels:
+      app: frontend
+
+  template:
+
+    metadata:
+      labels:
+        app: frontend
+
+    spec:
+
+      containers:
+
+      - name: frontend
+
+        image: 122384809512.dkr.ecr.us-east-1.amazonaws.com/blog-frontend:latest
+
+        ports:
+        - containerPort: 3000
+
+        imagePullPolicy: Always
+
+        resources:
+
+          requests:
+            cpu: "200m"
+            memory: "256Mi"
+
+          limits:
+            cpu: "500m"
+            memory: "512Mi"
+
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 3000
+          initialDelaySeconds: 5
+          periodSeconds: 10

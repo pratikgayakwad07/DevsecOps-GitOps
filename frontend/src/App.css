@@ -1,0 +1,272 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: 'Georgia', serif;
+  line-height: 1.6;
+  color: #333;
+  background: #f9f9f9;
+}
+
+.App {
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 20px;
+  background: white;
+  min-height: 100vh;
+  box-shadow: 0 0 20px rgba(0,0,0,0.1);
+}
+
+header {
+  border-bottom: 2px solid #eee;
+  padding-bottom: 20px;
+  margin-bottom: 30px;
+}
+
+header h1 {
+  text-align: center;
+  color: #2c3e50;
+  font-size: 2.5rem;
+  margin-bottom: 20px;
+}
+
+nav {
+  text-align: center;
+}
+
+nav button {
+  margin: 0 10px;
+  padding: 10px 20px;
+  border: 2px solid #3498db;
+  background: white;
+  color: #3498db;
+  border-radius: 25px;
+  cursor: pointer;
+  font-size: 14px;
+  transition: all 0.3s ease;
+}
+
+nav button:hover {
+  background: #3498db;
+  color: white;
+}
+
+nav button.active {
+  background: #3498db;
+  color: white;
+}
+
+.posts-list h2 {
+  margin-bottom: 20px;
+  color: #2c3e50;
+}
+
+.no-posts {
+  text-align: center;
+  color: #7f8c8d;
+  font-style: italic;
+  margin: 40px 0;
+}
+
+.post-card {
+  border: 1px solid #eee;
+  border-radius: 8px;
+  padding: 20px;
+  margin-bottom: 20px;
+  background: #fafafa;
+  transition: transform 0.2s ease;
+}
+
+.post-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+}
+
+.post-card h3 {
+  color: #2c3e50;
+  margin-bottom: 8px;
+  cursor: pointer;
+  font-size: 1.4rem;
+}
+
+.post-card h3:hover {
+  color: #3498db;
+}
+
+.post-meta {
+  color: #7f8c8d;
+  font-size: 14px;
+  margin-bottom: 10px;
+}
+
+.post-excerpt {
+  margin-bottom: 15px;
+  line-height: 1.5;
+}
+
+.post-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.post-actions button {
+  padding: 6px 12px;
+  border: 1px solid #ddd;
+  background: white;
+  color: #333;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.post-actions button:hover {
+  background: #f8f9fa;
+}
+
+.post-actions button.delete {
+  color: #e74c3c;
+  border-color: #e74c3c;
+}
+
+.post-actions button.delete:hover {
+  background: #e74c3c;
+  color: white;
+}
+
+.create-post h2 {
+  margin-bottom: 20px;
+  color: #2c3e50;
+}
+
+.create-post form {
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+}
+
+.create-post input {
+  padding: 12px;
+  border: 2px solid #eee;
+  border-radius: 6px;
+  font-size: 16px;
+}
+
+.create-post input:focus {
+  outline: none;
+  border-color: #3498db;
+}
+
+.create-post textarea {
+  padding: 12px;
+  border: 2px solid #eee;
+  border-radius: 6px;
+  font-size: 14px;
+  min-height: 300px;
+  resize: vertical;
+  font-family: inherit;
+  line-height: 1.5;
+}
+
+.create-post textarea:focus {
+  outline: none;
+  border-color: #3498db;
+}
+
+.form-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.form-actions button {
+  padding: 12px 24px;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.form-actions button[type="submit"] {
+  background: #27ae60;
+  color: white;
+}
+
+.form-actions button[type="submit"]:hover {
+  background: #229954;
+}
+
+.form-actions button[type="button"] {
+  background: #95a5a6;
+  color: white;
+}
+
+.form-actions button[type="button"]:hover {
+  background: #7f8c8d;
+}
+
+.view-post {
+  max-width: 100%;
+}
+
+.back-btn {
+  padding: 8px 16px;
+  border: 1px solid #ddd;
+  background: white;
+  color: #333;
+  border-radius: 4px;
+  cursor: pointer;
+  margin-bottom: 20px;
+}
+
+.back-btn:hover {
+  background: #f8f9fa;
+}
+
+.view-post article h1 {
+  color: #2c3e50;
+  margin-bottom: 10px;
+  font-size: 2.2rem;
+  line-height: 1.2;
+}
+
+.view-post .post-meta {
+  margin-bottom: 30px;
+  padding-bottom: 15px;
+  border-bottom: 1px solid #eee;
+}
+
+.post-content {
+  margin-bottom: 30px;
+}
+
+.post-content p {
+  margin-bottom: 15px;
+  line-height: 1.7;
+  font-size: 16px;
+}
+
+@media (max-width: 768px) {
+  .App {
+    padding: 15px;
+    margin: 0;
+  }
+  
+  header h1 {
+    font-size: 2rem;
+  }
+  
+  nav button {
+    margin: 5px;
+    padding: 8px 16px;
+  }
+  
+  .post-actions {
+    flex-wrap: wrap;
+  }
+  
+  .form-actions {
+    flex-direction: column;
+  }
+}
