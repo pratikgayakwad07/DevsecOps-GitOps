@@ -1,0 +1,326 @@
+name: Blog App DevSecOps CI/CD
+
+on:
+  push:
+    branches:
+      - main
+
+  pull_request:
+    branches:
+      - main
+
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: blog-app-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  AWS_REGION: us-east-1
+  ECR_FRONTEND_REPOSITORY: prod/blog-app
+  ECR_BACKEND_REPOSITORY: prod/backend-blog-app
+jobs:
+
+  # --------------------------------------------------
+  # JOB 1: SECRET SCANNING
+  # --------------------------------------------------
+
+  secret-scan:
+    name: Gitleaks Secret Scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Scan repository for secrets
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
+
+  # --------------------------------------------------
+  # JOB 2: DEPENDENCY SECURITY AUDIT
+  # --------------------------------------------------
+
+  dependency-audit:
+    name: NPM Security Audit
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        app:
+          - frontend
+          - backend
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Verify package files
+        working-directory: ${{ matrix.app }}
+        run: |
+          test -f package.json
+          test -f package-lock.json
+      - name: Install dependencies
+        working-directory: ${{ matrix.app }}
+        run: npm ci
+
+      - name: Run dependency audit
+        working-directory: ${{ matrix.app }}
+        run: npm audit --audit-level=high
+
+  # --------------------------------------------------
+  # JOB 3: FILESYSTEM SECURITY SCAN
+  # --------------------------------------------------
+
+  filesystem-scan:
+    name: Trivy Filesystem Scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Scan filesystem
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,secret,misconfig
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+          format: table
+
+  # --------------------------------------------------
+  # JOB 4: APPLICATION TESTS AND BUILDS
+  # --------------------------------------------------
+
+  application-build:
+    name: Application Build
+    runs-on: ubuntu-latest
+
+    needs:
+      - secret-scan
+      - dependency-audit
+      - filesystem-scan
+
+    strategy:
+      fail-fast: false
+      matrix:
+        app:
+          - frontend
+          - backend
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        working-directory: ${{ matrix.app }}
+        run: npm ci
+
+      - name: Run application tests
+        working-directory: ${{ matrix.app }}
+        shell: bash
+        run: |
+          if npm run | grep -qE '^[[:space:]]+test([[:space:]]|$)'; then
+            npm test --if-present
+          else
+            echo "No test script configured."
+          fi
+      - name: Build frontend
+        if: matrix.app == 'frontend'
+        working-directory: frontend
+        run: npm run build
+
+  # --------------------------------------------------
+  # JOB 5: BUILD, SCAN AND PUSH DOCKER IMAGES
+  # --------------------------------------------------
+
+  docker-publish:
+    name: Docker Build, Scan and Push
+    runs-on: ubuntu-latest
+
+    needs:
+      - application-build
+
+    # Only publish images from pushes to main.
+    # Pull requests must not receive AWS credentials.
+
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+
+    permissions:
+      contents: read
+      id-token: write
+
+    outputs:
+      registry: ${{ steps.login-ecr.outputs.registry }}
+      image_tag: ${{ steps.image-tag.outputs.tag }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set image tag
+        id: image-tag
+        run: echo "tag=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+
+      # AWS authentication uses GitHub OIDC.
+      # Configure AWS_ROLE_ARN in repository secrets.
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Verify ECR repositories
+        env:
+          AWS_DEFAULT_REGION: ${{ env.AWS_REGION }}
+        run: |
+          aws ecr describe-repositories \
+            --repository-names \
+              "${ECR_FRONTEND_REPOSITORY}" \
+              "${ECR_BACKEND_REPOSITORY}"
+      - name: Build frontend image
+        env:
+          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ steps.image-tag.outputs.tag }}
+        run: |
+          docker build \
+            --pull \
+            -t "$REGISTRY/$ECR_FRONTEND_REPOSITORY:$IMAGE_TAG" \
+            ./frontend
+      - name: Build backend image
+        env:
+          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ steps.image-tag.outputs.tag }}
+        run: |
+          docker build \
+            --pull \
+            -t "$REGISTRY/$ECR_BACKEND_REPOSITORY:$IMAGE_TAG" \
+            ./backend
+      - name: Scan frontend image
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ steps.login-ecr.outputs.registry }}/blog-frontend:${{ steps.image-tag.outputs.tag }}
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+          format: table
+
+      - name: Scan backend image
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ steps.login-ecr.outputs.registry }}/blog-backend:${{ steps.image-tag.outputs.tag }}
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+          format: table
+
+      - name: Push frontend image to ECR
+        env:
+          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ steps.image-tag.outputs.tag }}
+        run: |
+          docker push "$REGISTRY/$ECR_FRONTEND_REPOSITORY:$IMAGE_TAG"
+      - name: Push backend image to ECR
+        env:
+          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ steps.image-tag.outputs.tag }}
+        run: |
+          docker push "$REGISTRY/$ECR_BACKEND_REPOSITORY:$IMAGE_TAG"
+  # --------------------------------------------------
+  # JOB 6: UPDATE GITOPS MANIFESTS
+  # --------------------------------------------------
+
+  update-gitops:
+    name: Update Kubernetes Image Tags
+    runs-on: ubuntu-latest
+
+    needs:
+      - docker-publish
+
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+
+    # This job only updates Git.
+    # It does not need AWS credentials.
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          token: ${{ secrets.GH_TOKEN }}
+
+      - name: Install Kustomize
+        uses: imranismail/setup-kustomize@v2
+
+      - name: Verify Kustomize configuration
+        run: |
+          test -f k8s/kustomization.yaml
+          kustomize build k8s > /tmp/rendered-manifests.yaml
+      - name: Update frontend and backend image tags
+        env:
+          REGISTRY: ${{ needs.docker-publish.outputs.registry }}
+          IMAGE_TAG: ${{ needs.docker-publish.outputs.image_tag }}
+        run: |
+          kustomize edit set image \
+            "$REGISTRY/$ECR_FRONTEND_REPOSITORY=$REGISTRY/$ECR_FRONTEND_REPOSITORY:$IMAGE_TAG" \
+            --kustomization k8s/kustomization.yaml
+          kustomize edit set image \
+            "$REGISTRY/$ECR_BACKEND_REPOSITORY=$REGISTRY/$ECR_BACKEND_REPOSITORY:$IMAGE_TAG" \
+            --kustomization k8s/kustomization.yaml
+          kustomize build k8s > /tmp/rendered-manifests.yaml
+      - name: Commit GitOps changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add k8s/kustomization.yaml
+          if git diff --cached --quiet; then
+            echo "No GitOps changes to commit."
+            exit 0
+          fi
+          git commit -m "chore(gitops): deploy ${GITHUB_SHA}"
+          git push origin HEAD:main
+  # --------------------------------------------------
+  # JOB 7: VERIFY ARGO CD DEPLOYMENT
+  # --------------------------------------------------
+
+  deployment-notice:
+    name: GitOps Update Complete
+    runs-on: ubuntu-latest
+
+    needs:
+      - update-gitops
+
+    steps:
+      - name: Report deployment handoff
+        run: |
+          echo "GitOps manifests have been updated."
+          echo "Argo CD should detect the new Git revision."
+          echo "Verify application health in Argo CD and EKS."

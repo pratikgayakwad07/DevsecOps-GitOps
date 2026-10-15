@@ -22,7 +22,7 @@ spec:
 
       - name: backend
 
-        image: 122384809512.dkr.ecr.us-east-1.amazonaws.com/blog-backend:latest
+        image: 122384809512.dkr.ecr.us-east-1.amazonaws.com/prod/backend-blog-app:latest
 
         imagePullPolicy: Always
 

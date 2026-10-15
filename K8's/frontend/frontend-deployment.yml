@@ -25,7 +25,7 @@ spec:
 
       - name: frontend
 
-        image: 122384809512.dkr.ecr.us-east-1.amazonaws.com/blog-frontend:latest
+        image: 122384809512.dkr.ecr.us-east-1.amazonaws.com/prod/blog-app:latest
 
         ports:
         - containerPort: 3000
