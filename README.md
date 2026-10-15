@@ -25,6 +25,8 @@ React frontend, Node.js API, and MySQL deployed to Amazon EKS. GitHub Actions sc
 
 Pull requests run the scans, tests, and frontend build. AWS publishing and deployment run only for pushes to `main`.
 
+Trivy's documented `AWS-0104` exception covers the upstream EKS node-group egress rule required for NAT-based ECR pulls and AWS APIs; it does not permit inbound access.
+
 ## Check the deployment
 
 ```sh

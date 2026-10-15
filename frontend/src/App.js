@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import './App.css';
 
 // Use relative path so it works behind the same origin / ingress, or set REACT_APP_API_URL at build time
-const API_BASE = process.env.REACT_APP_API_URL || '';
+const API_BASE = import.meta.env.VITE_API_URL || '';
 
 function App() {
   const [posts, setPosts] = useState([]);

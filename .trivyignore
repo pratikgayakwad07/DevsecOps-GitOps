@@ -1,0 +1,4 @@
+# EKS managed node groups need outbound access through the private-subnet NAT gateway
+# for ECR, AWS APIs, and upstream Argo CD images; the upstream module's default egress rule
+# is required for this deployment and is not an application-managed ingress rule.
+AWS-0104

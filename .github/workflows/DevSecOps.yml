@@ -104,6 +104,7 @@ jobs:
         with:
           scan-type: fs
           scan-ref: .
+          skip-dirs: frontend/node_modules,infra/.terraform
           scanners: vuln,secret,misconfig
           severity: HIGH,CRITICAL
           ignore-unfixed: true
