@@ -14,6 +14,7 @@ module "eks" {
 
   cluster_name    = var.cluster_name
   cluster_version = var.cluster_version
+  cluster_endpoint_public_access_cidrs = var.cluster_endpoint_public_access_cidrs
   environment     = var.environment
   vpc_id          = module.vpc.vpc_id
   private_subnets = module.vpc.private_subnets
@@ -33,6 +34,8 @@ module "ecr" {
 module "oidc" {
   source = "./modules/oidc"
 
-  github_org  = var.github_org
-  github_repo = var.github_repo
+  aws_region   = var.aws_region
+  cluster_name = var.cluster_name
+  github_org   = var.github_org
+  github_repo  = var.github_repo
 }

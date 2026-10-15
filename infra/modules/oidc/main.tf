@@ -40,6 +40,8 @@ resource "aws_iam_role" "github_actions" {
 }
 
 # Policy for ECR push + EKS describe (minimal for CI)
+data "aws_caller_identity" "current" {}
+
 resource "aws_iam_role_policy" "github_actions_ecr" {
   name = "github-actions-ecr-eks"
   role = aws_iam_role.github_actions.id
@@ -66,10 +68,24 @@ resource "aws_iam_role_policy" "github_actions_ecr" {
       {
         Effect = "Allow"
         Action = [
-          "eks:DescribeCluster",
           "eks:ListClusters"
         ]
         Resource = "*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "eks:DescribeCluster"
+        ]
+        Resource = "arn:aws:eks:${var.aws_region}:${data.aws_caller_identity.current.account_id}:cluster/${var.cluster_name}"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "eks:UpdateClusterConfig",
+          "eks:DescribeUpdate"
+        ]
+        Resource = "arn:aws:eks:${var.aws_region}:${data.aws_caller_identity.current.account_id}:cluster/${var.cluster_name}"
       }
     ]
   })

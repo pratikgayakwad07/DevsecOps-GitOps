@@ -43,6 +43,11 @@ variable "cluster_version" {
   type        = string
 }
 
+variable "cluster_endpoint_public_access_cidrs" {
+  description = "Public IPv4 CIDRs permitted to reach the EKS API endpoint"
+  type        = list(string)
+}
+
 variable "instance_types" {
   description = "List of EC2 instance types for EKS node group"
   type        = list(string)

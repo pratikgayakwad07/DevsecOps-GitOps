@@ -8,6 +8,11 @@ variable "cluster_version" {
   type        = string
 }
 
+variable "cluster_endpoint_public_access_cidrs" {
+  description = "Public IPv4 CIDRs permitted to reach the EKS API endpoint"
+  type        = list(string)
+}
+
 variable "environment" {
   description = "Deployment environment"
   type        = string
