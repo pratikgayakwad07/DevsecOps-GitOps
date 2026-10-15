@@ -10,7 +10,7 @@ React frontend, Node.js API, and MySQL deployed to Amazon EKS. GitHub Actions sc
    - `AWS_SECRET_ACCESS_KEY`
    - `AWS_REGION` (use `us-east-1`)
 3. Push an `infra/` change to `main`, or manually run the **Terraform** workflow. It provisions the VPC, EKS, ECR, GitHub OIDC role, EBS CSI storage, and Argo CD.
-4. Copy Terraform's `github_actions_role_arn` output into the repository secret `AWS_ROLE_ARN`.
+4. The application workflow uses the Terraform-created OIDC role ARN by default. Set `AWS_ROLE_ARN` as a repository secret only if you use a different AWS account or role name.
 5. Push an application change to `main` to run the DevSecOps pipeline and deploy the app.
 
 > AWS infrastructure is billable while it exists. The Terraform Destroy workflow requires you to type `DESTROY` before it can remove resources.

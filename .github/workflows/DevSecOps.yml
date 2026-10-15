@@ -29,6 +29,7 @@ concurrency:
 
 env:
   AWS_REGION: us-east-1
+  AWS_ROLE_ARN: arn:aws:iam::122384809512:role/github-actions-blog-app-role
   ECR_FRONTEND_REPOSITORY: prod/blog-app
   ECR_BACKEND_REPOSITORY: prod/backend-blog-app
 jobs:
@@ -191,13 +192,12 @@ jobs:
         id: image-tag
         run: echo "tag=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
 
-      # AWS authentication uses GitHub OIDC.
-      # Configure AWS_ROLE_ARN in repository secrets.
+      # AWS authentication uses GitHub OIDC. The secret can override the Terraform-created role ARN.
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN || env.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Login to Amazon ECR
@@ -350,7 +350,7 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN || env.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Install kubectl
