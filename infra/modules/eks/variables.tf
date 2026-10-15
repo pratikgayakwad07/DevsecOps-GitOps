@@ -23,6 +23,11 @@ variable "private_subnets" {
   type        = list(string)
 }
 
+variable "github_actions_role_arn" {
+  description = "IAM role used by GitHub Actions for deployment verification"
+  type        = string
+}
+
 variable "instance_types" {
   description = "Instance types for managed node group"
   type        = list(string)

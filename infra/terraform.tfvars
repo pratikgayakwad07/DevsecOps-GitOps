@@ -7,8 +7,8 @@ public_subnets = ["10.0.1.0/24", "10.0.2.0/24", "10.0.3.0/24"]
 private_subnets = ["10.0.11.0/24", "10.0.12.0/24", "10.0.13.0/24"]
 
 cluster_name    = "blog-prod-eks"
-cluster_version = "1.31"
-instance_types  = ["t3.micro"]
+cluster_version = "1.34"
+instance_types  = ["t3.small"]
 desired_size    = 2
 min_size        = 2
 max_size        = 4

@@ -17,6 +17,7 @@ module "eks" {
   environment     = var.environment
   vpc_id          = module.vpc.vpc_id
   private_subnets = module.vpc.private_subnets
+  github_actions_role_arn = module.oidc.role_arn
   instance_types  = var.instance_types
   desired_size    = var.desired_size
   min_size        = var.min_size
