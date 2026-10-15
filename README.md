@@ -5,6 +5,7 @@ React frontend, Node.js API, and MySQL deployed to Amazon EKS. GitHub Actions sc
 ## First-time setup
 
 1. Set the Terraform values in `infra/terraform.tfvars`.
+   - Keep `github_owner_id` and `github_repository_id` aligned with this repository; the OIDC role only trusts this repository's `main` branch.
 2. Add these GitHub Actions secrets:
    - `AWS_ACCESS_KEY_ID`
    - `AWS_SECRET_ACCESS_KEY`
