@@ -6,6 +6,7 @@ on:
       - main
     paths-ignore:
       - "infra/**"
+      - "K8's/kustomization.yaml"
       - ".github/workflows/terraform.yml"
       - ".github/workflows/destroy.yml"
 
@@ -23,8 +24,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: blog-app-${{ github.ref }}
-  cancel-in-progress: true
+  group: blog-app-eks-${{ github.ref }}
+  cancel-in-progress: false
 
 env:
   AWS_REGION: us-east-1
@@ -356,6 +357,57 @@ jobs:
         uses: azure/setup-kubectl@v4
         with:
           version: v1.34.0
+
+      - name: Restrict EKS API access to this runner
+        shell: bash
+        run: |
+          runner_ip="$(curl --fail --silent --show-error https://checkip.amazonaws.com | tr -d '\r\n')"
+          if [[ ! "$runner_ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+            echo "Could not determine a valid runner IPv4 address."
+            exit 1
+          fi
+          runner_cidr="${runner_ip}/32"
+          private_access="$(aws eks describe-cluster \
+            --name blog-prod-eks \
+            --region "$AWS_REGION" \
+            --query 'cluster.resourcesVpcConfig.endpointPrivateAccess' \
+            --output text)"
+          current_cidr="$(aws eks describe-cluster \
+            --name blog-prod-eks \
+            --region "$AWS_REGION" \
+            --query 'cluster.resourcesVpcConfig.publicAccessCidrs[0]' \
+            --output text)"
+
+          if [[ "$current_cidr" != "$runner_cidr" ]]; then
+            update_id="$(aws eks update-cluster-config \
+              --name blog-prod-eks \
+              --region "$AWS_REGION" \
+              --resources-vpc-config "endpointPublicAccess=true,endpointPrivateAccess=${private_access},publicAccessCidrs=${runner_cidr}" \
+              --query 'update.id' \
+              --output text)"
+
+            for attempt in $(seq 1 60); do
+              status="$(aws eks describe-update \
+                --name blog-prod-eks \
+                --region "$AWS_REGION" \
+                --update-id "$update_id" \
+                --query 'update.status' \
+                --output text)"
+              if [[ "$status" == "Successful" ]]; then
+                break
+              fi
+              if [[ "$status" == "Failed" || "$status" == "Cancelled" ]]; then
+                echo "EKS API CIDR update failed with status: $status"
+                exit 1
+              fi
+              sleep 10
+            done
+
+            if [[ "$status" != "Successful" ]]; then
+              echo "Timed out waiting for the EKS API CIDR update."
+              exit 1
+            fi
+          fi
 
       - name: Configure kubectl
         run: aws eks update-kubeconfig --name blog-prod-eks --region "$AWS_REGION"
