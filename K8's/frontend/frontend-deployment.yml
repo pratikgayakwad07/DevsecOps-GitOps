@@ -21,6 +21,12 @@ spec:
 
     spec:
 
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101
+        seccompProfile:
+          type: RuntimeDefault
+
       containers:
 
       - name: frontend
@@ -31,6 +37,12 @@ spec:
         - containerPort: 3000
 
         imagePullPolicy: Always
+
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
 
         resources:
 
