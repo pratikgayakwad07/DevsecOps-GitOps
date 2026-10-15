@@ -10,7 +10,7 @@ spec:
   source:
     repoURL: https://github.com/pratikgayakwad07/blog-app-eks-devsecops.git
     targetRevision: main
-    path: K8's/*
+    path: K8's
   destination:
     server: https://kubernetes.default.svc
     namespace: blog-app
