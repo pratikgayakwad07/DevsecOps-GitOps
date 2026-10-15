@@ -8,6 +8,7 @@ resources:
   - database/pvc.yaml
   - database/secret.yaml
   - database/service.yaml
+  - database/storageclass.yaml
   - database/statefulset.yaml
   - frontend/frontend-deployment.yml
   - frontend/frontend-service.yml

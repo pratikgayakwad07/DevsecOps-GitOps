@@ -4,7 +4,7 @@ FROM node:20-alpine AS builder
 WORKDIR /app
 
 COPY package*.json ./
-RUN npm ci
+RUN npm install --no-audit --no-fund
 
 COPY . .
 
@@ -14,17 +14,8 @@ ENV REACT_APP_API_URL=$REACT_APP_API_URL
 RUN npm run build
 
 # Production Stage
-FROM node:20-alpine
+FROM nginxinc/nginx-unprivileged:alpine
 
-WORKDIR /app
-
-RUN npm install -g serve@14
-
-COPY --from=builder /app/build ./build
-
-RUN addgroup -g 1001 -S nodejs && adduser -S nodejs -u 1001
-USER nodejs
-
+COPY --from=builder /app/build /usr/share/nginx/html
+COPY nginx.conf /etc/nginx/conf.d/default.conf
 EXPOSE 3000
-
-CMD ["serve", "-s", "build", "-l", "3000"]

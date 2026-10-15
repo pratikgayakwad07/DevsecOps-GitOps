@@ -60,6 +60,10 @@ spec:
         - name: mysql-storage
           mountPath: /var/lib/mysql
 
+        - name: mysql-init
+          mountPath: /docker-entrypoint-initdb.d
+          readOnly: true
+
         resources:
 
           requests:
@@ -100,3 +104,7 @@ spec:
 
         persistentVolumeClaim:
           claimName: mysql-pvc
+
+      - name: mysql-init
+        configMap:
+          name: mysql-config

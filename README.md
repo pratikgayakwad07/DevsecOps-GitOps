@@ -1,40 +1,35 @@
-# Simple Blog App on AWS EKS – CI/CD & Monitoring
+# Blog App on AWS EKS
 
-Full-stack blog (React + Node.js + MySQL-in-cluster) on Amazon EKS with:
+React frontend, Node.js API, and MySQL deployed to Amazon EKS. GitHub Actions scans, tests, builds, and pushes the images to ECR; Argo CD deploys the image tags from Git.
 
-- **GitHub Actions** (Jenkins removed) – Checkout, Build, Test, DevSecOps, Docker build, Push to ECR
-- **GitHub OIDC** – passwordless AWS auth
-- **Argo CD** – GitOps
-- **Prometheus + Grafana** – dashboards & alerts
-- **CloudWatch** – EKS logs
-- **Terraform** in new `infra/` folder (original Terraform left untouched; RDS removed)
+## First-time setup
 
-## Structure
+1. Set the Terraform values in `infra/terraform.tfvars`.
+2. Add these GitHub Actions secrets:
+   - `AWS_ACCESS_KEY_ID`
+   - `AWS_SECRET_ACCESS_KEY`
+   - `AWS_REGION` (use `us-east-1`)
+3. Push an `infra/` change to `main`, or manually run the **Terraform** workflow. It provisions the VPC, EKS, ECR, GitHub OIDC role, EBS CSI storage, and Argo CD.
+4. Copy Terraform's `github_actions_role_arn` output into the repository secret `AWS_ROLE_ARN`.
+5. Push an application change to `main` to run the DevSecOps pipeline and deploy the app.
 
+> AWS infrastructure is billable while it exists. The Terraform Destroy workflow requires you to type `DESTROY` before it can remove resources.
+
+## Pipeline stages
+
+1. Gitleaks, Trivy filesystem scan, and npm dependency audits.
+2. Frontend and backend tests; frontend production build.
+3. Docker builds, Trivy image scans, and push of commit-tagged images to ECR using GitHub OIDC.
+4. Commit the new image tags to `K8's/kustomization.yaml`; Argo CD syncs them to EKS.
+5. Verify frontend, backend, and MySQL rollouts on EKS, then smoke-test the frontend load balancer.
+
+Pull requests run the scans, tests, and frontend build. AWS publishing and deployment run only for pushes to `main`.
+
+## Check the deployment
+
+```sh
+kubectl get pods -n blog-app
+kubectl get service frontend-service -n blog-app
 ```
-backend/          Node.js API (env-based DB config)
-frontend/         React SPA
-k8s/              Manifests (namespace, mysql, backend, frontend)
-infra/            New Terraform (modules, OIDC, no RDS)
-argocd/           Argo CD Application
-monitoring/       Prometheus values + custom alerts
-.github/workflows CI/CD + DevSecOps
-docs/             Deployment guide
-```
 
-## How to run
-
-1. Edit `infra/terraform.tfvars` (github_org / github_repo)
-2. `cd infra && terraform init && terraform apply`
-3. Set GitHub secret `AWS_ROLE_ARN`
-4. Follow `docs/DEPLOYMENT.md` for Argo CD + monitoring
-5. Push code → pipeline + GitOps deploys the app
-
-## DevSecOps stages
-- Trivy filesystem + image scans
-- Gitleaks secret scan
-- npm audit
-- Fail pipeline on CRITICAL/HIGH container vulns
-
-## Completion Criteria
-Application deployed on EKS through GitHub Actions + Argo CD and monitored with Prometheus/Grafana.
+Open the frontend service's `EXTERNAL-IP` or load-balancer hostname in a browser. GitHub Actions also reports deployment and smoke-test failures.
