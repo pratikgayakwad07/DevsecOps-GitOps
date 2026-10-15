@@ -9,6 +9,7 @@ resource "aws_ecr_repository" "backend" {
   tags = {
     Environment = var.environment
     App         = "backend"
+    Project     = "Simple-Blog-App"
   }
 }
 
@@ -23,6 +24,7 @@ resource "aws_ecr_repository" "frontend" {
   tags = {
     Environment = var.environment
     App         = "frontend"
+    Project     = "Simple-Blog-App"
   }
 }
 

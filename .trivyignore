@@ -2,3 +2,5 @@
 # for ECR, AWS APIs, and upstream Argo CD images; the upstream module's default egress rule
 # is required for this deployment and is not an application-managed ingress rule.
 AWS-0104
+# GitHub-hosted runners need to reach the IAM-authenticated EKS API endpoint for deployment.
+AWS-0040
