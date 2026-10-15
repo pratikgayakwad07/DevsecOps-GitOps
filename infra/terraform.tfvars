@@ -13,5 +13,7 @@ desired_size    = 2
 min_size        = 2
 max_size        = 4
 
-github_org  = "pratikgayakwad07"
-github_repo = "blog-app-eks-devsecops"
+github_org           = "pratikgayakwad07"
+github_repo          = "blog-app-eks-devsecops"
+github_owner_id      = "148746650"
+github_repository_id = "1420392539"

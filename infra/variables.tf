@@ -77,3 +77,13 @@ variable "github_repo" {
   description = "GitHub repository name for OIDC trust"
   type        = string
 }
+
+variable "github_owner_id" {
+  description = "Immutable GitHub owner ID used in the OIDC subject"
+  type        = string
+}
+
+variable "github_repository_id" {
+  description = "Immutable GitHub repository ID used in the OIDC subject"
+  type        = string
+}

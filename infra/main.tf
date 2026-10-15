@@ -35,7 +35,9 @@ module "oidc" {
   source = "./modules/oidc"
 
   aws_region   = var.aws_region
-  cluster_name = var.cluster_name
-  github_org   = var.github_org
-  github_repo  = var.github_repo
+  cluster_name         = var.cluster_name
+  github_org           = var.github_org
+  github_repo          = var.github_repo
+  github_owner_id      = var.github_owner_id
+  github_repository_id = var.github_repository_id
 }
