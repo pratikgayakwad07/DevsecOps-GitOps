@@ -1,4 +1,5 @@
 import { render, screen } from '@testing-library/react';
+import { createElement } from 'react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import App from './App';
 
@@ -13,6 +14,6 @@ afterEach(() => {
 });
 
 it('renders the blog application header', () => {
-  render(<App />);
+  render(createElement(App));
   expect(screen.getByRole('heading', { name: /simple blog/i })).toBeInTheDocument();
 });
