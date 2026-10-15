@@ -22,10 +22,24 @@ spec:
 
     spec:
 
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        fsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
+
       containers:
       - name: mysql
         image: mysql:8.0
         imagePullPolicy: IfNotPresent
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+
         ports:
         - containerPort: 3306
 
@@ -63,6 +77,12 @@ spec:
         - name: mysql-init
           mountPath: /docker-entrypoint-initdb.d
           readOnly: true
+
+        - name: mysql-tmp
+          mountPath: /tmp
+
+        - name: mysql-run
+          mountPath: /var/run/mysqld
 
         resources:
 
@@ -108,3 +128,11 @@ spec:
       - name: mysql-init
         configMap:
           name: mysql-config
+
+      - name: mysql-tmp
+        emptyDir:
+          sizeLimit: 256Mi
+
+      - name: mysql-run
+        emptyDir:
+          sizeLimit: 16Mi

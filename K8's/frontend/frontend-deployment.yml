@@ -24,6 +24,7 @@ spec:
       securityContext:
         runAsNonRoot: true
         runAsUser: 101
+        fsGroup: 101
         seccompProfile:
           type: RuntimeDefault
 
@@ -40,6 +41,7 @@ spec:
 
         securityContext:
           allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
           capabilities:
             drop:
             - ALL
@@ -60,3 +62,12 @@ spec:
             port: 3000
           initialDelaySeconds: 5
           periodSeconds: 10
+
+        volumeMounts:
+        - name: nginx-tmp
+          mountPath: /tmp
+
+      volumes:
+      - name: nginx-tmp
+        emptyDir:
+          sizeLimit: 64Mi
