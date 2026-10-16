@@ -15,6 +15,7 @@ on:
       - main
     paths-ignore:
       - "infra/**"
+      - "K8's/kustomization.yaml"
       - ".github/workflows/terraform.yml"
       - ".github/workflows/destroy.yml"
 
@@ -22,7 +23,6 @@ on:
 
 permissions:
   contents: read
-  id-token: write
 
 concurrency:
   group: blog-app-eks-${{ github.ref }}
@@ -30,9 +30,11 @@ concurrency:
 
 env:
   AWS_REGION: us-east-1
-  AWS_ROLE_ARN: "arn:aws:iam::122384809512:role/github-actions-blog-app-role"
   ECR_FRONTEND_REPOSITORY: prod/blog-app
   ECR_BACKEND_REPOSITORY: prod/backend-blog-app
+  EKS_CLUSTER_NAME: blog-prod-eks
+  K8S_NAMESPACE: blog-app
+
 jobs:
 
   # --------------------------------------------------
@@ -77,14 +79,18 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "20"
+          cache: npm
+          cache-dependency-path: ${{ matrix.app }}/package-lock.json
 
       - name: Verify package files
         working-directory: ${{ matrix.app }}
         run: |
           test -f package.json
+          test -f package-lock.json
+
       - name: Install dependencies
         working-directory: ${{ matrix.app }}
-        run: npm install --no-audit --no-fund
+        run: npm ci --no-audit --no-fund
 
       - name: Run dependency audit
         working-directory: ${{ matrix.app }}
@@ -107,7 +113,7 @@ jobs:
         with:
           scan-type: fs
           scan-ref: .
-          skip-dirs: frontend/node_modules,infra/.terraform
+          skip-dirs: frontend/node_modules,backend/node_modules,infra/.terraform
           scanners: vuln,secret,misconfig
           severity: HIGH,CRITICAL
           ignore-unfixed: true
@@ -115,7 +121,7 @@ jobs:
           format: table
 
   # --------------------------------------------------
-  # JOB 4: APPLICATION TESTS AND BUILDS
+  # JOB 4: APPLICATION BUILD AND TESTS
   # --------------------------------------------------
 
   application-build:
@@ -145,17 +151,18 @@ jobs:
 
       - name: Install dependencies
         working-directory: ${{ matrix.app }}
-        run: npm install --no-audit --no-fund
+        run: npm ci --no-audit --no-fund
 
       - name: Run application tests
         working-directory: ${{ matrix.app }}
         shell: bash
         run: |
-          if npm run | grep -qE '^[[:space:]]+test([[:space:]]|$)'; then
-            npm test --if-present
+          if node -e "process.exit(require('./package.json').scripts?.test ? 0 : 1)"; then
+            npm test -- --runInBand
           else
-            echo "No test script configured."
+            echo "No test script configured; skipping tests."
           fi
+
       - name: Build frontend
         if: matrix.app == 'frontend'
         working-directory: frontend
@@ -172,10 +179,9 @@ jobs:
     needs:
       - application-build
 
-    # Only publish images from pushes to main.
-    # Pull requests must not receive AWS credentials.
-
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    if: >-
+      github.event_name != 'pull_request' &&
+      github.ref == 'refs/heads/main'
 
     permissions:
       contents: read
@@ -193,50 +199,55 @@ jobs:
         id: image-tag
         run: echo "tag=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
 
-      # AWS authentication uses GitHub OIDC. The secret can override the Terraform-created role ARN.
+      # IMPORTANT:
+      # Create GitHub repository secret AWS_ROLE_ARN.
+      # Never hardcode AWS access keys.
 
-      - name: Configure AWS credentials
+      - name: Configure AWS credentials using OIDC
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-          aws-region: us-east-1
+          aws-region: ${{ env.AWS_REGION }}
           audience: sts.amazonaws.com
           role-session-name: GitHubActionsSession
-          
+
+      - name: Verify AWS identity
+        run: aws sts get-caller-identity
+
       - name: Login to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
       - name: Verify ECR repositories
-        env:
-          AWS_DEFAULT_REGION: ${{ env.AWS_REGION }}
         run: |
           aws ecr describe-repositories \
             --repository-names \
-              "${ECR_FRONTEND_REPOSITORY}" \
-              "${ECR_BACKEND_REPOSITORY}"
+              "$ECR_FRONTEND_REPOSITORY" \
+              "$ECR_BACKEND_REPOSITORY"
+
       - name: Build frontend image
         env:
           REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           IMAGE_TAG: ${{ steps.image-tag.outputs.tag }}
         run: |
-          docker build \
-            --pull \
+          docker build --pull \
             -t "$REGISTRY/$ECR_FRONTEND_REPOSITORY:$IMAGE_TAG" \
             ./frontend
+
       - name: Build backend image
         env:
           REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           IMAGE_TAG: ${{ steps.image-tag.outputs.tag }}
         run: |
-          docker build \
-            --pull \
+          docker build --pull \
             -t "$REGISTRY/$ECR_BACKEND_REPOSITORY:$IMAGE_TAG" \
             ./backend
+
       - name: Scan frontend image
         uses: aquasecurity/trivy-action@v0.35.0
         with:
           image-ref: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_FRONTEND_REPOSITORY }}:${{ steps.image-tag.outputs.tag }}
+          scanners: vuln
           severity: HIGH,CRITICAL
           ignore-unfixed: true
           exit-code: "1"
@@ -246,6 +257,7 @@ jobs:
         uses: aquasecurity/trivy-action@v0.35.0
         with:
           image-ref: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_BACKEND_REPOSITORY }}:${{ steps.image-tag.outputs.tag }}
+          scanners: vuln
           severity: HIGH,CRITICAL
           ignore-unfixed: true
           exit-code: "1"
@@ -257,12 +269,14 @@ jobs:
           IMAGE_TAG: ${{ steps.image-tag.outputs.tag }}
         run: |
           docker push "$REGISTRY/$ECR_FRONTEND_REPOSITORY:$IMAGE_TAG"
+
       - name: Push backend image to ECR
         env:
           REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           IMAGE_TAG: ${{ steps.image-tag.outputs.tag }}
         run: |
           docker push "$REGISTRY/$ECR_BACKEND_REPOSITORY:$IMAGE_TAG"
+
   # --------------------------------------------------
   # JOB 6: UPDATE GITOPS MANIFESTS
   # --------------------------------------------------
@@ -274,16 +288,15 @@ jobs:
     needs:
       - docker-publish
 
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
-
-    # This job only updates Git.
-    # It does not need AWS credentials.
+    if: >-
+      github.event_name != 'pull_request' &&
+      github.ref == 'refs/heads/main'
 
     permissions:
       contents: write
 
     steps:
-      - name: Checkout repository
+      - name: Checkout main branch
         uses: actions/checkout@v4
         with:
           ref: main
@@ -296,6 +309,7 @@ jobs:
         run: |
           test -f "K8's/kustomization.yaml"
           kustomize build "K8's" > /tmp/rendered-manifests.yaml
+
       - name: Update frontend and backend image tags
         working-directory: "K8's"
         env:
@@ -304,56 +318,58 @@ jobs:
         run: |
           kustomize edit set image \
             "$REGISTRY/$ECR_FRONTEND_REPOSITORY=$REGISTRY/$ECR_FRONTEND_REPOSITORY:$IMAGE_TAG"
+
           kustomize edit set image \
             "$REGISTRY/$ECR_BACKEND_REPOSITORY=$REGISTRY/$ECR_BACKEND_REPOSITORY:$IMAGE_TAG"
+
           kustomize build . > /tmp/rendered-manifests.yaml
+
       - name: Commit GitOps changes
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
           git add "K8's/kustomization.yaml"
+
           if git diff --cached --quiet; then
             echo "No GitOps changes to commit."
             exit 0
           fi
+
           git commit -m "chore(gitops): deploy ${GITHUB_SHA}"
           git push origin HEAD:main
+
   # --------------------------------------------------
-  # JOB 7: VERIFY ARGO CD DEPLOYMENT
+  # JOB 7: VERIFY EKS DEPLOYMENT
   # --------------------------------------------------
-
-  deployment-notice:
-    name: GitOps Update Complete
-    runs-on: ubuntu-latest
-
-    needs:
-      - deployment-verification
-
-    steps:
-      - name: Report successful deployment
-        run: |
-          echo "The application is healthy on EKS and its frontend endpoint passed the smoke test."
 
   deployment-verification:
-    name: Verify EKS Deployment
+    name: Verify Argo CD and EKS Deployment
     runs-on: ubuntu-latest
 
     needs:
       - docker-publish
       - update-gitops
 
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: >-
+      github.event_name != 'pull_request' &&
+      github.ref == 'refs/heads/main'
 
     permissions:
       contents: read
       id-token: write
 
     steps:
-      - name: Configure AWS credentials
+      - name: Configure AWS credentials using OIDC
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN || env.AWS_ROLE_ARN }}
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
+          audience: sts.amazonaws.com
+          role-session-name: GitHubActionsVerify
+
+      - name: Verify AWS identity
+        run: aws sts get-caller-identity
 
       - name: Install kubectl
         uses: azure/setup-kubectl@v4
@@ -361,9 +377,12 @@ jobs:
           version: v1.34.0
 
       - name: Configure kubectl
-        run: aws eks update-kubeconfig --name blog-prod-eks --region "$AWS_REGION"
+        run: |
+          aws eks update-kubeconfig \
+            --name "$EKS_CLUSTER_NAME" \
+            --region "$AWS_REGION"
 
-      - name: Wait for GitOps images and healthy workloads
+      - name: Wait for Argo CD to apply expected images
         env:
           REGISTRY: ${{ needs.docker-publish.outputs.registry }}
           IMAGE_TAG: ${{ needs.docker-publish.outputs.image_tag }}
@@ -373,48 +392,102 @@ jobs:
           expected_backend="$REGISTRY/$ECR_BACKEND_REPOSITORY:$IMAGE_TAG"
 
           for attempt in $(seq 1 90); do
-            frontend_image=$(kubectl get deployment frontend -n blog-app \
-              -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null || true)
-            backend_image=$(kubectl get deployment backend -n blog-app \
-              -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null || true)
+            frontend_image=$(kubectl get deployment frontend \
+              -n "$K8S_NAMESPACE" \
+              -o jsonpath='{.spec.template.spec.containers[0].image}' \
+              2>/dev/null || true)
 
-            if [[ "$frontend_image" == "$expected_frontend" && "$backend_image" == "$expected_backend" ]]; then
+            backend_image=$(kubectl get deployment backend \
+              -n "$K8S_NAMESPACE" \
+              -o jsonpath='{.spec.template.spec.containers[0].image}' \
+              2>/dev/null || true)
+
+            if [[ "$frontend_image" == "$expected_frontend" &&
+                  "$backend_image" == "$expected_backend" ]]; then
+              echo "Expected images applied by Argo CD."
               break
             fi
 
             if [[ "$attempt" -eq 90 ]]; then
-              echo "Argo CD did not apply the expected image tags."
-              echo "Frontend image: $frontend_image"
-              echo "Backend image: $backend_image"
+              echo "Expected images were not applied."
+              echo "Frontend: $frontend_image"
+              echo "Backend: $backend_image"
               exit 1
             fi
+
             sleep 10
           done
 
-          kubectl rollout status deployment/frontend -n blog-app --timeout=10m
-          kubectl rollout status deployment/backend -n blog-app --timeout=10m
-          kubectl rollout status statefulset/mysql -n blog-app --timeout=10m
+      - name: Verify application rollouts
+        run: |
+          kubectl rollout status deployment/frontend \
+            -n "$K8S_NAMESPACE" --timeout=10m
 
-      - name: Smoke test frontend load balancer
+          kubectl rollout status deployment/backend \
+            -n "$K8S_NAMESPACE" --timeout=10m
+
+          kubectl rollout status statefulset/mysql \
+            -n "$K8S_NAMESPACE" --timeout=10m
+
+      - name: Smoke test frontend and backend API
         shell: bash
         run: |
           endpoint=""
+
           for attempt in $(seq 1 60); do
-            endpoint=$(kubectl get service frontend-service -n blog-app \
-              -o jsonpath='{.status.loadBalancer.ingress[0].hostname}{.status.loadBalancer.ingress[0].ip}')
+            endpoint=$(kubectl get service frontend-service \
+              -n "$K8S_NAMESPACE" \
+              -o jsonpath='{.status.loadBalancer.ingress[0].hostname}{.status.loadBalancer.ingress[0].ip}' \
+              2>/dev/null || true)
+
             if [[ -n "$endpoint" ]]; then
               break
             fi
+
             sleep 10
           done
 
           if [[ -z "$endpoint" ]]; then
-            echo "Frontend load balancer did not receive an endpoint."
+            echo "Frontend LoadBalancer endpoint not found."
             exit 1
           fi
 
-          curl --fail --retry 12 --retry-connrefused --retry-delay 5 \
-            --max-time 15 "http://$endpoint/"
-          curl --fail --silent --show-error --retry 12 --retry-all-errors \
-            --retry-delay 5 --max-time 15 "http://$endpoint/api/posts" |
+          echo "Testing frontend endpoint..."
+
+          curl --fail --silent --show-error \
+            --retry 12 \
+            --retry-connrefused \
+            --retry-delay 5 \
+            --max-time 15 \
+            "http://$endpoint/"
+
+          echo "Testing backend API..."
+
+          curl --fail --silent --show-error \
+            --retry 12 \
+            --retry-all-errors \
+            --retry-delay 5 \
+            --max-time 15 \
+            "http://$endpoint/api/posts" |
             jq -e 'type == "array"'
+
+  # --------------------------------------------------
+  # JOB 8: SUCCESS NOTICE
+  # --------------------------------------------------
+
+  deployment-notice:
+    name: Deployment Successful
+    runs-on: ubuntu-latest
+
+    needs:
+      - deployment-verification
+
+    if: needs.deployment-verification.result == 'success'
+
+    steps:
+      - name: Report successful deployment
+        run: |
+          echo "CI/CD completed successfully."
+          echo "Docker images published to ECR."
+          echo "GitOps manifests updated."
+          echo "EKS deployment and smoke tests passed."
