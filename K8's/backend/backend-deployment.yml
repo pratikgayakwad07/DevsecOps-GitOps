@@ -31,7 +31,7 @@ spec:
 
       - name: backend
 
-        image: ACCOUNT_ID.dkr.ecr.us-east-1.amazonaws.com/prod/backend-blog-app:latest
+        image: 122384809512.dkr.ecr.us-east-1.amazonaws.com/prod/backend-blog-app:latest
 
         imagePullPolicy: Always
 
