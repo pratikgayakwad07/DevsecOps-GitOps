@@ -1,20 +1,19 @@
-# Use Node.js LTS image
-FROM node:20-alpine
+FROM node:22-bookworm-slim AS build
 
 WORKDIR /app
 
 COPY package*.json ./
+RUN npm ci --omit=dev
 
-RUN npm install --omit=dev --no-audit --no-fund
+COPY server.js ./
 
-COPY . .
+FROM gcr.io/distroless/nodejs22-debian13:nonroot
 
-RUN addgroup -g 1001 -S nodejs && adduser -S nodejs -u 1001
-USER nodejs
-
+WORKDIR /app
+ENV NODE_ENV=production
 EXPOSE 5000
 
-HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
-  CMD wget -qO- http://localhost:5000/health || exit 1
+COPY --from=build --chown=nonroot:nonroot /app/node_modules ./node_modules
+COPY --from=build --chown=nonroot:nonroot /app/server.js ./server.js
 
-CMD ["node", "server.js"]
+CMD ["server.js"]
