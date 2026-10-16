@@ -2,5 +2,11 @@
 # for ECR, AWS APIs, and upstream Argo CD images; the upstream module's default egress rule
 # is required for this deployment and is not an application-managed ingress rule.
 AWS-0104
+
 # GitHub-hosted runners need to reach the IAM-authenticated EKS API endpoint for deployment.
 AWS-0040
+
+# Trainee project intentionally keeps EKS public endpoint open (0.0.0.0/0)
+# so kubectl and GitHub Actions work without managing changing runner IPs.
+# In production you should restrict this to known CIDRs.
+AWS-0041

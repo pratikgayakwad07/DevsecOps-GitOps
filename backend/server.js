@@ -1,3 +1,6 @@
+// Simple Blog API - DevOps Trainee Project
+// This is a basic Express server that talks to MySQL
+
 const express = require('express');
 const mysql = require('mysql2');
 const cors = require('cors');

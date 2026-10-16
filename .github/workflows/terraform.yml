@@ -35,17 +35,6 @@ jobs:
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
 
-      - name: Restrict EKS API access to this runner
-        shell: bash
-        run: |
-          runner_ip="$(curl --fail --silent --show-error https://checkip.amazonaws.com | tr -d '\r\n')"
-          if [[ ! "$runner_ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
-            echo "Could not determine a valid runner IPv4 address."
-            exit 1
-          fi
-          cidrs="$(jq -cn --arg cidr "${runner_ip}/32" '[$cidr]')"
-          echo "TF_VAR_cluster_endpoint_public_access_cidrs=$cidrs" >> "$GITHUB_ENV"
-
       - name: Terraform Init
         run: terraform init
 

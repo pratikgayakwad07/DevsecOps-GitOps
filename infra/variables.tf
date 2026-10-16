@@ -1,3 +1,6 @@
+# Variables used by Terraform.
+# Most values are set in terraform.tfvars
+
 variable "aws_region" {
   description = "AWS region to deploy resources"
   type        = string
@@ -46,6 +49,7 @@ variable "cluster_version" {
 variable "cluster_endpoint_public_access_cidrs" {
   description = "Public IPv4 CIDRs permitted to reach the EKS API endpoint"
   type        = list(string)
+  default     = ["0.0.0.0/0"]
 }
 
 variable "instance_types" {

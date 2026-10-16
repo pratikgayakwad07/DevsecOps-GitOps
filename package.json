@@ -1,12 +1,21 @@
 {
-  "name": "simple-blog-app",
+  "name": "blog-app-eks-devsecops",
   "version": "1.0.0",
+  "description": "DevOps Intern Project - Full stack Blog App on AWS EKS with GitHub Actions, Argo CD, Trivy & monitoring",
+  "author": "DevOps Trainee",
+  "license": "MIT",
   "scripts": {
-    "dev": "concurrently \"npm run server\" \"npm run client\"",
-    "server": "cd backend && npm run dev",
-    "client": "cd frontend && npm start"
+    "dev": "echo 'Run frontend and backend separately for local development'",
+    "test": "echo 'Tests are run inside GitHub Actions'"
   },
-  "devDependencies": {
-    "concurrently": "^7.6.0"
-  }
+  "keywords": [
+    "devops",
+    "eks",
+    "kubernetes",
+    "terraform",
+    "github-actions",
+    "argocd",
+    "trainee",
+    "internship"
+  ]
 }

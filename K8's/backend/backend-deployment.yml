@@ -1,3 +1,6 @@
+# Backend Deployment - Node.js Express API
+# Connects to MySQL using environment variables from ConfigMap + Secret
+
 apiVersion: apps/v1
 kind: Deployment
 
@@ -28,7 +31,7 @@ spec:
 
       - name: backend
 
-        image: 122384809512.dkr.ecr.us-east-1.amazonaws.com/prod/backend-blog-app:latest
+        image: ACCOUNT_ID.dkr.ecr.us-east-1.amazonaws.com/prod/backend-blog-app:latest
 
         imagePullPolicy: Always
 

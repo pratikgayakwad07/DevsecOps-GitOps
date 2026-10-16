@@ -1,3 +1,6 @@
+# This file was written during my DevOps internship.
+# It creates the complete AWS infrastructure for the Blog App.
+
 module "vpc" {
   source = "./modules/vpc"
 
