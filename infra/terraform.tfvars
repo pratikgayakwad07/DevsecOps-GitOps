@@ -10,7 +10,7 @@ cluster_name    = "blog-prod-eks"
 cluster_version = "1.34"
 instance_types  = ["t3.small"]
 desired_size    = 3
-min_size        = 2
+min_size        = 3
 max_size        = 4
 
 github_org           = "pratikgayakwad07"
