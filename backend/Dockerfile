@@ -1,20 +1,20 @@
-FROM node:22-bookworm-slim AS build
+# Use Node.js LTS image
+FROM node:20-alpine
 
+# Create application directory
 WORKDIR /app
 
+# Copy package files
 COPY package*.json ./
-RUN npm install --omit=dev --no-audit --no-fund
 
-COPY server.js ./
+# Install dependencies
+RUN npm ci
 
-FROM gcr.io/distroless/nodejs22-debian13:nonroot
+# Copy application source code
+COPY . .
 
-WORKDIR /app
-ENV NODE_ENV=production
-EXPOSE 5000
-USER 65532:65532
+# Expose application port
+EXPOSE 5003
 
-COPY --from=build --chown=nonroot:nonroot /app/node_modules ./node_modules
-COPY --from=build --chown=nonroot:nonroot /app/server.js ./server.js
-
-CMD ["server.js"]
+# Start the application
+CMD ["npm", "start"]

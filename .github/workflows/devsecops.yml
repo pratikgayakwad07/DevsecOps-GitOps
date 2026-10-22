@@ -1,0 +1,184 @@
+name: DevSecOps CI/CD
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  AWS_REGION: "us-east-1"
+  ROLE_ARN: "arn:aws:iam::122384809512:role/github-actions-blog-app-role"
+  CLUSTER_NAME: "blog-prod-eks"
+  BACKEND_REPO: "prod/backend-blog-app"
+  FRONTEND_REPO: "prod/blog-app"
+
+jobs:
+  # 1. Code Quality & Unit Tests
+  code-checks:
+    name: Code Quality & Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: |
+            backend/package-lock.json
+            frontend/package-lock.json
+
+      - name: Install & Syntax Check Backend
+        run: |
+          cd backend
+          npm ci
+          node --check server.js
+
+      - name: Install & Test Frontend
+        run: |
+          cd frontend
+          npm ci
+          npm test -- --watchAll=false
+        env:
+          CI: true
+
+  # 2. Secret Scanning (DevSecOps)
+  secret-scanning:
+    name: Secret Scanning (Gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+
+  # 3. Dependency Scanning (DevSecOps)
+  dependency-scan:
+    name: Dependency Audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Audit Backend Dependencies
+        run: |
+          cd backend
+          npm audit --audit-level=critical || true
+
+      - name: Audit Frontend Dependencies
+        run: |
+          cd frontend
+          npm audit --audit-level=critical || true
+
+  # 4. Container Linting & Security Vulnerability Scan (DevSecOps)
+  container-security:
+    name: Container Lint & Vulnerability Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Lint Backend Dockerfile
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: backend/Dockerfile
+          ignore: DL3018
+
+      - name: Lint Frontend Dockerfile
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: frontend/Dockerfile
+          ignore: DL3018
+
+      - name: Build Local Images for Scanning
+        run: |
+          docker build -t test-backend:local backend
+          docker build -t test-frontend:local frontend
+
+      - name: Trivy Vulnerability Scan (Backend)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: test-backend:local
+          format: table
+          severity: HIGH,CRITICAL
+          exit-code: 0
+
+      - name: Trivy Vulnerability Scan (Frontend)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: test-frontend:local
+          format: table
+          severity: HIGH,CRITICAL
+          exit-code: 0
+
+  # 5. Build, Push to AWS ECR using GitHub OIDC & Deploy
+  build-and-deploy:
+    name: Build, Push ECR & Deploy to EKS
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+    needs: [code-checks, secret-scanning, dependency-scan, container-security]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build, Tag & Push Backend Image
+        env:
+          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build -t $REGISTRY/$BACKEND_REPO:$IMAGE_TAG -t $REGISTRY/$BACKEND_REPO:latest backend
+          docker push $REGISTRY/$BACKEND_REPO:$IMAGE_TAG
+          docker push $REGISTRY/$BACKEND_REPO:latest
+
+      - name: Build, Tag & Push Frontend Image
+        env:
+          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build -t $REGISTRY/$FRONTEND_REPO:$IMAGE_TAG -t $REGISTRY/$FRONTEND_REPO:latest frontend
+          docker push $REGISTRY/$FRONTEND_REPO:$IMAGE_TAG
+          docker push $REGISTRY/$FRONTEND_REPO:latest
+
+      - name: Update Kubeconfig
+        run: aws eks update-kubeconfig --name ${{ env.CLUSTER_NAME }} --region ${{ env.AWS_REGION }}
+
+      - name: Apply Kubernetes Manifests & Rollout
+        env:
+          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          kubectl apply -f Kubernetes/namespace.yaml
+          kubectl apply -f Kubernetes/database/
+          kubectl apply -f Kubernetes/backend/
+          kubectl apply -f Kubernetes/frontend/
+          kubectl apply -f Kubernetes/ingress.yaml
+          kubectl set image deployment/backend backend=$REGISTRY/$BACKEND_REPO:$IMAGE_TAG -n blog-app
+          kubectl set image deployment/frontend frontend=$REGISTRY/$FRONTEND_REPO:$IMAGE_TAG -n blog-app
+          kubectl rollout status deployment/backend -n blog-app --timeout=5m
+          kubectl rollout status deployment/frontend -n blog-app --timeout=5m

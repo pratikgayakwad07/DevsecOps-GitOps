@@ -1,16 +1,18 @@
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: simple-blog-app
+  name: blog-app
   namespace: argocd
   finalizers:
     - resources-finalizer.argocd.argoproj.io
 spec:
   project: default
   source:
-    repoURL: https://github.com/YOUR_GITHUB_USERNAME/blog-app-eks-devsecops.git
-    targetRevision: main
-    path: K8's
+    repoURL: https://github.com/pratikgayakwad07/Simple-blog-app-on-EKS.git
+    targetRevision: HEAD
+    path: Kubernetes
+    directory:
+      recurse: true
   destination:
     server: https://kubernetes.default.svc
     namespace: blog-app
@@ -18,12 +20,5 @@ spec:
     automated:
       prune: true
       selfHeal: true
-      allowEmpty: false
     syncOptions:
       - CreateNamespace=true
-    retry:
-      limit: 3
-      backoff:
-        duration: 5s
-        factor: 2
-        maxDuration: 3m

@@ -1,6 +1,3 @@
-// Simple Blog API - DevOps Trainee Project
-// This is a basic Express server that talks to MySQL
-
 const express = require('express');
 const mysql = require('mysql2');
 const cors = require('cors');
@@ -9,21 +6,12 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Use environment variables for DB connection (12-factor app)
-const db = mysql.createPool({
+const db = mysql.createConnection({
   host: process.env.DB_HOST || 'localhost',
-  port: process.env.DB_PORT || 3306,
+  port: Number(process.env.DB_PORT) || 3306,
   user: process.env.DB_USER || 'root',
   password: process.env.DB_PASSWORD || '',
-  database: process.env.DB_NAME || 'blog_db',
-  waitForConnections: true,
-  connectionLimit: 10,
-  queueLimit: 0
-});
-
-// Health check endpoint
-app.get('/health', (req, res) => {
-  res.status(200).json({ status: 'ok' });
+  database: process.env.DB_NAME || 'blog_db'
 });
 
 // GET all posts
@@ -46,27 +34,21 @@ app.get('/api/posts/:id', (req, res) => {
 // POST new post
 app.post('/api/posts', (req, res) => {
   const { title, content, author } = req.body;
-  db.query(
-    'INSERT INTO posts (title, content, author) VALUES (?, ?, ?)',
-    [title, content, author],
-    (err, result) => {
-      if (err) return res.status(500).json({ error: err.message });
-      res.status(201).json({ id: result.insertId, title, content, author });
-    }
-  );
+  db.query('INSERT INTO posts (title, content, author) VALUES (?, ?, ?)', 
+    [title, content, author], (err, result) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json({ id: result.insertId, title, content, author });
+  });
 });
 
 // PUT update post
 app.put('/api/posts/:id', (req, res) => {
   const { title, content, author } = req.body;
-  db.query(
-    'UPDATE posts SET title = ?, content = ?, author = ? WHERE id = ?',
-    [title, content, author, req.params.id],
-    (err) => {
-      if (err) return res.status(500).json({ error: err.message });
-      res.json({ message: 'Post updated' });
-    }
-  );
+  db.query('UPDATE posts SET title = ?, content = ?, author = ? WHERE id = ?',
+    [title, content, author, req.params.id], (err) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json({ message: 'Post updated' });
+  });
 });
 
 // DELETE post
@@ -77,10 +59,5 @@ app.delete('/api/posts/:id', (req, res) => {
   });
 });
 
-const PORT = process.env.PORT || 5000;
-
-if (require.main === module) {
-  app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
-}
-
-module.exports = app;
+const port = process.env.PORT || 5003;
+app.listen(port, () => console.log(`Server running on port ${port}`));
