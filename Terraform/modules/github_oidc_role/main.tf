@@ -32,6 +32,10 @@ resource "aws_iam_role" "github_actions" {
 }
   name = var.role_name
   assume_role_policy = data.aws_iam_policy_document.github_assume_role.json
+  depends_on = [aws_iam_openid_connect_provider.github]
+}
+  name = var.role_name
+  assume_role_policy = data.aws_iam_policy_document.github_assume_role.json
 }
 
 resource "aws_iam_role_policy_attachment" "ecr_read" {
