@@ -14,4 +14,4 @@ private_subnets = ["10.0.11.0/24","10.0.12.0/24","10.0.13.0/24"]
 cluster_name    = "blog-prod-eks"
 cluster_version = "1.31"
 
-instance_type = "t2.micro"
+instance_type = "t3.medium"

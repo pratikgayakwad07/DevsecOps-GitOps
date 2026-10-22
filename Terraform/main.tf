@@ -7,6 +7,22 @@ module "vpc" {
   public_subnets  = var.public_subnets
   private_subnets = var.private_subnets
   azs = var.azs
+}
+
+module "github_oidc_role" {
+  source = "./modules/github_oidc_role"
+  role_name = var.role_name
+  repository_pattern = var.repository_pattern
+}
+
+  source = "./modules/vpc"
+
+  environment = var.environment
+  vpc_name    = var.vpc_name
+  vpc_cidr    = var.vpc_cidr
+  public_subnets  = var.public_subnets
+  private_subnets = var.private_subnets
+  azs = var.azs
   
 }
 

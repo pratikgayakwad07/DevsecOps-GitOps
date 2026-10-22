@@ -31,7 +31,7 @@ module "eks" {
       desired_size = 2
       min_size = 2
       max_size = 3
-      instance_types = ["t2.micro"]
+      instance_types = [var.instance_type]
       capacity_type = "ON_DEMAND"
       disk_size = 20
 

@@ -5,6 +5,22 @@ variable "aws_region" {
 
 
 variable "environment" {
+  description = "Environment name"
+  type        = string
+}
+
+variable "role_name" {
+  description = "Name of the IAM role for GitHub OIDC"
+  type        = string
+  default     = "github-actions-blog-app-role"
+}
+
+variable "repository_pattern" {
+  description = "Repository pattern for OIDC trust"
+  type        = string
+  default     = "repo:pratikgayakwad07/*:*"
+}
+
   description = "Deployment environment (e.g., dev, prod)"
   type        = string
 }
