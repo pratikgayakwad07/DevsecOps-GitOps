@@ -21,13 +21,9 @@ variable "repository_pattern" {
   default     = "repo:pratikgayakwad07/*:*"
 }
 
-  description = "Deployment environment (e.g., dev, prod)"
-  type        = string
-}
 
 variable "vpc_name" {
   description = "Name of the VPC"
-  type        = string
 }
 
 variable "vpc_cidr" {
