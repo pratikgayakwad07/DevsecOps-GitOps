@@ -1,5 +1,10 @@
-data "aws_iam_openid_connect_provider" "github" {
+resource "aws_iam_openid_connect_provider" "github" {
   url = "https://token.actions.githubusercontent.com"
+  client_id_list = ["sts.amazonaws.com"]
+  thumbprint_list = ["6938fd4d98bab03faadb97b34396831e3780aea1"]
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 data "aws_iam_policy_document" "github_assume_role" {
@@ -7,7 +12,7 @@ data "aws_iam_policy_document" "github_assume_role" {
     effect = "Allow"
     principals {
       type        = "Federated"
-      identifiers = [data.aws_iam_openid_connect_provider.github.arn]
+      identifiers = [aws_iam_openid_connect_provider.github.arn]
     }
     actions = ["sts:AssumeRoleWithWebIdentity"]
     condition {
