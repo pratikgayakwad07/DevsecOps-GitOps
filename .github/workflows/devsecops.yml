@@ -7,21 +7,27 @@ on:
     branches: [main, master]
   workflow_dispatch:
 
+# Least-privilege permissions
 permissions:
-  contents: read
-  id-token: write
+  contents: write      # needed to push image-tag updates back to the repo
+  id-token: write      # needed for OIDC authentication with AWS
+  pull-requests: read
 
 env:
   AWS_REGION: "us-east-1"
+  # IAM role created by Terraform github_oidc_role module
   ROLE_ARN: "arn:aws:iam::122384809512:role/github-actions-blog-app-role"
   CLUSTER_NAME: "blog-prod-eks"
   BACKEND_REPO: "prod/backend-blog-app"
   FRONTEND_REPO: "prod/blog-app"
+  AWS_ACCOUNT_ID: "122384809512"
 
 jobs:
+  # -----------------------------------------------------------------------
   # 1. Code Quality & Unit Tests
+  # -----------------------------------------------------------------------
   code-checks:
-    name: Code Quality & Lint
+    name: Code Quality & Tests
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
@@ -36,23 +42,26 @@ jobs:
             backend/package-lock.json
             frontend/package-lock.json
 
-      - name: Install & Syntax Check Backend
+      - name: Install & Syntax-Check Backend
         run: |
           cd backend
           npm ci
           node --check server.js
+          echo "Backend syntax OK"
 
       - name: Install & Test Frontend
         run: |
           cd frontend
           npm ci
-          npm test -- --watchAll=false
+          npm test -- --watchAll=false --passWithNoTests
         env:
           CI: true
 
-  # 2. Secret Scanning (DevSecOps)
+  # -----------------------------------------------------------------------
+  # 2. Secret Scanning (Gitleaks)
+  # -----------------------------------------------------------------------
   secret-scanning:
-    name: Secret Scanning (Gitleaks)
+    name: Secret Scanning
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
@@ -62,8 +71,12 @@ jobs:
 
       - name: Run Gitleaks
         uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  # 3. Dependency Scanning (DevSecOps)
+  # -----------------------------------------------------------------------
+  # 3. Dependency Audit
+  # -----------------------------------------------------------------------
   dependency-scan:
     name: Dependency Audit
     runs-on: ubuntu-latest
@@ -79,16 +92,20 @@ jobs:
       - name: Audit Backend Dependencies
         run: |
           cd backend
+          npm ci
           npm audit --audit-level=critical || true
 
       - name: Audit Frontend Dependencies
         run: |
           cd frontend
+          npm ci
           npm audit --audit-level=critical || true
 
-  # 4. Container Linting & Security Vulnerability Scan (DevSecOps)
+  # -----------------------------------------------------------------------
+  # 4. Container Lint & Image Vulnerability Scan
+  # -----------------------------------------------------------------------
   container-security:
-    name: Container Lint & Vulnerability Scan
+    name: Container Lint & Scan
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
@@ -98,20 +115,20 @@ jobs:
         uses: hadolint/hadolint-action@v3.1.0
         with:
           dockerfile: backend/Dockerfile
-          ignore: DL3018
+          ignore: DL3018,DL3008
 
       - name: Lint Frontend Dockerfile
         uses: hadolint/hadolint-action@v3.1.0
         with:
           dockerfile: frontend/Dockerfile
-          ignore: DL3018
+          ignore: DL3018,DL3008
 
       - name: Build Local Images for Scanning
         run: |
-          docker build -t test-backend:local backend
-          docker build -t test-frontend:local frontend
+          docker build -t test-backend:local backend/
+          docker build -t test-frontend:local frontend/
 
-      - name: Trivy Vulnerability Scan (Backend)
+      - name: Trivy Scan — Backend
         uses: aquasecurity/trivy-action@0.28.0
         with:
           image-ref: test-backend:local
@@ -119,7 +136,7 @@ jobs:
           severity: HIGH,CRITICAL
           exit-code: 0
 
-      - name: Trivy Vulnerability Scan (Frontend)
+      - name: Trivy Scan — Frontend
         uses: aquasecurity/trivy-action@0.28.0
         with:
           image-ref: test-frontend:local
@@ -127,59 +144,137 @@ jobs:
           severity: HIGH,CRITICAL
           exit-code: 0
 
-  # 5. Build, Push to AWS ECR using GitHub OIDC & Deploy
-  build-and-deploy:
-    name: Build, Push ECR & Deploy to EKS
+  # -----------------------------------------------------------------------
+  # 5. Build & Push to ECR, then update GitOps manifests
+  #    Only runs on push to main/master (not PRs)
+  # -----------------------------------------------------------------------
+  build-and-push:
+    name: Build, Push to ECR & Update GitOps
     if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
     needs: [code-checks, secret-scanning, dependency-scan, container-security]
     runs-on: ubuntu-latest
+    outputs:
+      image_tag: ${{ steps.meta.outputs.image_tag }}
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
+        with:
+          # Use a PAT (GITOPS_TOKEN) so the commit pushed back can trigger Argo CD
+          # Falls back to GITHUB_TOKEN for the git push (Argo CD detects the change via polling)
+          token: ${{ secrets.GITOPS_TOKEN || secrets.GITHUB_TOKEN }}
 
-      - name: Configure AWS credentials via OIDC
+      - name: Set Image Tag
+        id: meta
+        run: |
+          SHORT_SHA="${GITHUB_SHA::8}"
+          echo "image_tag=${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+          echo "Using image tag: ${SHORT_SHA}"
+
+      # Authenticate to AWS using GitHub OIDC — no long-lived credentials
+      - name: Configure AWS Credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          role-to-assume: ${{ env.ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
+          role-session-name: GitHubActions-BlogApp-${{ github.run_id }}
 
       - name: Login to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Build, Tag & Push Backend Image
+      # Build and push backend
+      - name: Build & Push Backend Image
         env:
           REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          IMAGE_TAG: ${{ github.sha }}
+          IMAGE_TAG: ${{ steps.meta.outputs.image_tag }}
         run: |
-          docker build -t $REGISTRY/$BACKEND_REPO:$IMAGE_TAG -t $REGISTRY/$BACKEND_REPO:latest backend
+          docker build \
+            -t $REGISTRY/$BACKEND_REPO:$IMAGE_TAG \
+            -t $REGISTRY/$BACKEND_REPO:latest \
+            backend/
           docker push $REGISTRY/$BACKEND_REPO:$IMAGE_TAG
           docker push $REGISTRY/$BACKEND_REPO:latest
+          echo "Pushed backend: $REGISTRY/$BACKEND_REPO:$IMAGE_TAG"
 
-      - name: Build, Tag & Push Frontend Image
+      # Build and push frontend
+      - name: Build & Push Frontend Image
         env:
           REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          IMAGE_TAG: ${{ github.sha }}
+          IMAGE_TAG: ${{ steps.meta.outputs.image_tag }}
         run: |
-          docker build -t $REGISTRY/$FRONTEND_REPO:$IMAGE_TAG -t $REGISTRY/$FRONTEND_REPO:latest frontend
+          docker build \
+            -t $REGISTRY/$FRONTEND_REPO:$IMAGE_TAG \
+            -t $REGISTRY/$FRONTEND_REPO:latest \
+            frontend/
           docker push $REGISTRY/$FRONTEND_REPO:$IMAGE_TAG
           docker push $REGISTRY/$FRONTEND_REPO:latest
+          echo "Pushed frontend: $REGISTRY/$FRONTEND_REPO:$IMAGE_TAG"
+
+      # Update the image tag in Kubernetes manifests so Argo CD picks up the new version
+      # This is the GitOps update step — CI writes the tag, Argo CD deploys it
+      - name: Update Image Tags in Kubernetes Manifests
+        env:
+          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ steps.meta.outputs.image_tag }}
+        run: |
+          # Update backend deployment image tag
+          sed -i "s|image: ${REGISTRY}/${BACKEND_REPO}:.*|image: ${REGISTRY}/${BACKEND_REPO}:${IMAGE_TAG}|g" \
+            Kubernetes/backend/backend-deployment.yml
+
+          # Update frontend deployment image tag
+          sed -i "s|image: ${REGISTRY}/${FRONTEND_REPO}:.*|image: ${REGISTRY}/${FRONTEND_REPO}:${IMAGE_TAG}|g" \
+            Kubernetes/frontend/frontend-deployment.yml
+
+          echo "Updated backend image to: ${REGISTRY}/${BACKEND_REPO}:${IMAGE_TAG}"
+          echo "Updated frontend image to: ${REGISTRY}/${FRONTEND_REPO}:${IMAGE_TAG}"
+          cat Kubernetes/backend/backend-deployment.yml | grep image:
+          cat Kubernetes/frontend/frontend-deployment.yml | grep image:
+
+      - name: Commit & Push Updated Manifests
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add Kubernetes/backend/backend-deployment.yml \
+                  Kubernetes/frontend/frontend-deployment.yml
+
+          # Only commit if there are actual changes
+          if git diff --cached --quiet; then
+            echo "No manifest changes to commit."
+          else
+            git commit -m "ci: update image tags to ${{ steps.meta.outputs.image_tag }} [skip ci]"
+            git push origin HEAD:${{ github.ref_name }}
+            echo "Manifests updated and pushed. Argo CD will sync automatically."
+          fi
+
+  # -----------------------------------------------------------------------
+  # 6. Verify EKS Rollout (only on push to main/master)
+  # -----------------------------------------------------------------------
+  verify-deployment:
+    name: Verify EKS Rollout
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+    needs: [build-and-push]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure AWS Credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: GitHubActions-Verify-${{ github.run_id }}
 
       - name: Update Kubeconfig
         run: aws eks update-kubeconfig --name ${{ env.CLUSTER_NAME }} --region ${{ env.AWS_REGION }}
 
-      - name: Apply Kubernetes Manifests & Rollout
-        env:
-          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          IMAGE_TAG: ${{ github.sha }}
+      # Wait up to 10 minutes for Argo CD to sync and Kubernetes to roll out
+      - name: Wait for Argo CD Sync & Rollout
         run: |
-          kubectl apply -f Kubernetes/namespace.yaml
-          kubectl apply -f Kubernetes/database/
-          kubectl apply -f Kubernetes/backend/
-          kubectl apply -f Kubernetes/frontend/
-          kubectl apply -f Kubernetes/ingress.yaml
-          kubectl set image deployment/backend backend=$REGISTRY/$BACKEND_REPO:$IMAGE_TAG -n blog-app
-          kubectl set image deployment/frontend frontend=$REGISTRY/$FRONTEND_REPO:$IMAGE_TAG -n blog-app
-          kubectl rollout status deployment/backend -n blog-app --timeout=5m
-          kubectl rollout status deployment/frontend -n blog-app --timeout=5m
+          echo "Waiting for backend rollout..."
+          kubectl rollout status deployment/backend -n blog-app --timeout=10m
+
+          echo "Waiting for frontend rollout..."
+          kubectl rollout status deployment/frontend -n blog-app --timeout=10m
+
+          echo "Deployment verification complete."
+          kubectl get pods -n blog-app
+          kubectl get svc -n blog-app

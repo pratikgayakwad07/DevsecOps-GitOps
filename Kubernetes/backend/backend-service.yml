@@ -3,10 +3,16 @@ kind: Service
 metadata:
   name: backend-service
   namespace: blog-app
+  labels:
+    app: backend
+    app.kubernetes.io/name: backend
+    app.kubernetes.io/part-of: blog-app
 spec:
   selector:
     app: backend
   ports:
-  - port: 5003
+  - name: http
+    port: 5003
     targetPort: 5003
+    protocol: TCP
   type: ClusterIP

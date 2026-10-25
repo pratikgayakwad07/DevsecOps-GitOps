@@ -1,0 +1,34 @@
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# React build output
+frontend/build/
+
+# Environment files — never commit real credentials
+.env
+.env.*
+!.env.example
+
+# Terraform state and secrets
+Terraform/.terraform/
+Terraform/*.tfstate
+Terraform/*.tfstate.*
+Terraform/*.tfplan
+Terraform/tfplan
+Terraform/errored.tfstate
+Terraform/.terraform.lock.hcl
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Docker
+*.tar
+
+# Kubernetes secrets with real values — use sealed-secrets or external-secrets in prod
+# Kubernetes/database/secret.yaml  # tracked intentionally (template only — no real passwords in prod)

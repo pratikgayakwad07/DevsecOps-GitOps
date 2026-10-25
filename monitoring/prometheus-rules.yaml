@@ -1,30 +1,124 @@
 # PrometheusRule custom resource for Prometheus Operator (kube-prometheus-stack)
+# Install with: kubectl apply -f monitoring/prometheus-rules.yaml
 apiVersion: monitoring.coreos.com/v1
 kind: PrometheusRule
 metadata:
   name: blog-app-alerts
   namespace: monitoring
   labels:
+    # These labels must match the Prometheus Operator's ruleSelector
     release: prometheus
     app: kube-prometheus-stack
 spec:
   groups:
-  - name: blog-app.rules
+
+  - name: blog-app.pod.rules
     rules:
+
     - alert: PodCrashLooping
+      # Pod restarting more than 2 times per minute over 5 minutes
       expr: rate(kube_pod_container_status_restarts_total{namespace="blog-app"}[5m]) * 60 > 2
       for: 2m
       labels:
         severity: critical
+        namespace: blog-app
       annotations:
-        summary: "Pod {{ $labels.pod }} is in CrashLoopBackOff"
-        description: "Pod {{ $labels.pod }} in namespace {{ $labels.namespace }} has restarted more than 2 times in 5 minutes."
+        summary: "Pod {{ $labels.pod }} is CrashLoopBackOff"
+        description: |
+          Pod {{ $labels.pod }} in namespace {{ $labels.namespace }} has restarted
+          more than 2 times/min over the last 5 minutes.
+          Action: kubectl logs {{ $labels.pod }} -n blog-app --previous
 
-    - alert: HighCPUUsage
-      expr: sum(rate(container_cpu_usage_seconds_total{namespace="blog-app",container!=""}[5m])) by (pod) > 0.4
+    - alert: PodNotReady
+      expr: kube_pod_status_ready{namespace="blog-app", condition="true"} == 0
+      for: 5m
+      labels:
+        severity: warning
+        namespace: blog-app
+      annotations:
+        summary: "Pod {{ $labels.pod }} is not ready"
+        description: |
+          Pod {{ $labels.pod }} has not been Ready for 5 minutes.
+          Action: kubectl describe pod {{ $labels.pod }} -n blog-app
+
+    - alert: PodOOMKilled
+      expr: kube_pod_container_status_last_terminated_reason{namespace="blog-app", reason="OOMKilled"} == 1
+      for: 1m
+      labels:
+        severity: critical
+        namespace: blog-app
+      annotations:
+        summary: "Container {{ $labels.container }} OOMKilled in pod {{ $labels.pod }}"
+        description: |
+          Container {{ $labels.container }} in pod {{ $labels.pod }} was killed due to
+          out-of-memory. Consider increasing memory limits.
+
+  - name: blog-app.cpu.rules
+    rules:
+
+    - alert: HighPodCPUUsage
+      # Pod using more than 400m CPU for 2 minutes
+      expr: sum(rate(container_cpu_usage_seconds_total{namespace="blog-app",container!="",container!="POD"}[5m])) by (pod) > 0.4
       for: 2m
       labels:
         severity: warning
+        namespace: blog-app
       annotations:
-        summary: "Pod {{ $labels.pod }} high CPU usage"
-        description: "Pod {{ $labels.pod }} CPU usage exceeded 400m over 2 minutes."
+        summary: "High CPU on pod {{ $labels.pod }}"
+        description: |
+          Pod {{ $labels.pod }} CPU usage exceeded 400m cores over 2 minutes.
+
+    - alert: HighNodeCPUUsage
+      # A node has > 80% CPU for 5 minutes
+      expr: 100 - (avg by (node) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 80
+      for: 5m
+      labels:
+        severity: warning
+      annotations:
+        summary: "High CPU on node {{ $labels.node }}"
+        description: "Node {{ $labels.node }} CPU > 80% for 5 minutes."
+
+  - name: blog-app.memory.rules
+    rules:
+
+    - alert: HighPodMemoryUsage
+      # Pod using > 400Mi for 2 minutes
+      expr: sum(container_memory_working_set_bytes{namespace="blog-app",container!="",container!="POD"}) by (pod) > 419430400
+      for: 2m
+      labels:
+        severity: warning
+        namespace: blog-app
+      annotations:
+        summary: "High memory on pod {{ $labels.pod }}"
+        description: "Pod {{ $labels.pod }} memory > 400Mi for 2 minutes."
+
+    - alert: HighNodeMemoryUsage
+      # Node memory utilisation > 85%
+      expr: 100 * (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) > 85
+      for: 5m
+      labels:
+        severity: warning
+      annotations:
+        summary: "High memory on node {{ $labels.instance }}"
+        description: "Node {{ $labels.instance }} memory > 85% for 5 minutes."
+
+  - name: blog-app.node.rules
+    rules:
+
+    - alert: NodeNotReady
+      expr: kube_node_status_condition{condition="Ready", status="true"} == 0
+      for: 2m
+      labels:
+        severity: critical
+      annotations:
+        summary: "Node {{ $labels.node }} is NotReady"
+        description: "Node {{ $labels.node }} has been NotReady for 2 minutes."
+
+    - alert: NodeDiskPressure
+      expr: kube_node_status_condition{condition="DiskPressure", status="true"} == 1
+      for: 1m
+      labels:
+        severity: warning
+      annotations:
+        summary: "Node {{ $labels.node }} has disk pressure"
+        description: "Node {{ $labels.node }} is reporting DiskPressure."

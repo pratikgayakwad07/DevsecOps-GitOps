@@ -5,10 +5,13 @@ metadata:
   namespace: argocd
   finalizers:
     - resources-finalizer.argocd.argoproj.io
+  annotations:
+    # Argo CD will poll the repo every 3 minutes for changes
+    argocd.argoproj.io/refresh: "3m"
 spec:
   project: default
   source:
-    repoURL: https://github.com/pratikgayakwad07/Simple-blog-app-on-EKS.git
+    repoURL: https://github.com/pratikgayakwad07/DevsecOps-GitOps.git
     targetRevision: HEAD
     path: Kubernetes
     directory:
@@ -22,3 +25,17 @@ spec:
       selfHeal: true
     syncOptions:
       - CreateNamespace=true
+      - PrunePropagationPolicy=foreground
+      - RespectIgnoreDifferences=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
+  # Ignore image tag diffs (CI updates image in Git; ArgoCD deploys from Git)
+  ignoreDifferences:
+  - group: apps
+    kind: Deployment
+    jsonPointers:
+    - /spec/template/metadata/annotations/kubectl.kubernetes.io~1last-applied-configuration

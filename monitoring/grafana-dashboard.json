@@ -1,50 +1,229 @@
 {
+  "__inputs": [
+    {
+      "name": "DS_PROMETHEUS",
+      "label": "Prometheus",
+      "description": "Prometheus data source",
+      "type": "datasource",
+      "pluginId": "prometheus",
+      "pluginName": "Prometheus"
+    }
+  ],
+  "__requires": [
+    { "type": "grafana", "id": "grafana", "name": "Grafana", "version": "10.0.0" },
+    { "type": "datasource", "id": "prometheus", "name": "Prometheus", "version": "1.0.0" },
+    { "type": "panel", "id": "stat", "name": "Stat", "version": "" },
+    { "type": "panel", "id": "timeseries", "name": "Time series", "version": "" },
+    { "type": "panel", "id": "table", "name": "Table", "version": "" },
+    { "type": "panel", "id": "gauge", "name": "Gauge", "version": "" }
+  ],
   "annotations": { "list": [] },
+  "description": "EKS Blog App — Kubernetes cluster and application monitoring",
   "editable": true,
   "fiscalYearStartMonth": 0,
-  "graphTooltip": 0,
+  "graphTooltip": 1,
   "id": null,
   "links": [],
   "liveNow": false,
   "panels": [
     {
       "collapsed": false,
-      "gridPos": { "h": 6, "w": 6, "x": 0, "y": 0 },
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "id": 100,
+      "title": "Cluster Overview",
+      "type": "row"
+    },
+    {
+      "gridPos": { "h": 6, "w": 4, "x": 0, "y": 1 },
       "id": 1,
-      "title": "Total Pods (blog-app)",
+      "title": "Running Pods (blog-app)",
       "type": "stat",
+      "options": { "colorMode": "background", "graphMode": "none" },
       "targets": [
         {
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
           "expr": "count(kube_pod_status_phase{namespace=\"blog-app\", phase=\"Running\"})",
+          "legendFormat": "Running Pods",
           "refId": "A"
         }
       ]
     },
     {
-      "collapsed": false,
-      "gridPos": { "h": 6, "w": 6, "x": 6, "y": 0 },
+      "gridPos": { "h": 6, "w": 4, "x": 4, "y": 1 },
       "id": 2,
       "title": "Healthy Nodes",
       "type": "stat",
+      "options": { "colorMode": "background", "graphMode": "none" },
       "targets": [
         {
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
           "expr": "sum(kube_node_status_condition{condition=\"Ready\",status=\"true\"})",
+          "legendFormat": "Ready Nodes",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "gridPos": { "h": 6, "w": 4, "x": 8, "y": 1 },
+      "id": 3,
+      "title": "Total Pod Restarts (blog-app, 1h)",
+      "type": "stat",
+      "options": { "colorMode": "background", "graphMode": "area" },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "sum(increase(kube_pod_container_status_restarts_total{namespace=\"blog-app\"}[1h]))",
+          "legendFormat": "Restarts",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "gridPos": { "h": 6, "w": 4, "x": 12, "y": 1 },
+      "id": 4,
+      "title": "Pending Pods (cluster-wide)",
+      "type": "stat",
+      "options": { "colorMode": "background", "graphMode": "none" },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "count(kube_pod_status_phase{phase=\"Pending\"}) or vector(0)",
+          "legendFormat": "Pending",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "gridPos": { "h": 6, "w": 4, "x": 16, "y": 1 },
+      "id": 5,
+      "title": "Failed Pods (cluster-wide)",
+      "type": "stat",
+      "options": { "colorMode": "background", "graphMode": "none" },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "count(kube_pod_status_phase{phase=\"Failed\"}) or vector(0)",
+          "legendFormat": "Failed",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "gridPos": { "h": 6, "w": 4, "x": 20, "y": 1 },
+      "id": 6,
+      "title": "Cluster Node Count",
+      "type": "stat",
+      "options": { "colorMode": "background", "graphMode": "none" },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "count(kube_node_info)",
+          "legendFormat": "Nodes",
           "refId": "A"
         }
       ]
     },
     {
       "collapsed": false,
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 6 },
-      "id": 3,
-      "title": "Pod CPU Utilization",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 7 },
+      "id": 101,
+      "title": "Node CPU & Memory",
+      "type": "row"
+    },
+    {
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "id": 10,
+      "title": "Node CPU Utilization (%)",
       "type": "timeseries",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 70 },
+              { "color": "red", "value": 85 }
+            ]
+          }
+        }
+      },
       "targets": [
         {
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "sum(rate(container_cpu_usage_seconds_total{namespace=\"blog-app\",container!=\"\"}[5m])) by (pod)",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "100 - (avg by (node) (rate(node_cpu_seconds_total{mode=\"idle\"}[5m])) * 100)",
+          "legendFormat": "{{node}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "id": 11,
+      "title": "Node Memory Utilization (%)",
+      "type": "timeseries",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 75 },
+              { "color": "red", "value": 90 }
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "100 * (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)",
+          "legendFormat": "{{instance}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 16 },
+      "id": 102,
+      "title": "Pod CPU & Memory (blog-app namespace)",
+      "type": "row"
+    },
+    {
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 17 },
+      "id": 20,
+      "title": "Pod CPU Utilization (cores)",
+      "type": "timeseries",
+      "fieldConfig": {
+        "defaults": { "unit": "short" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "sum(rate(container_cpu_usage_seconds_total{namespace=\"blog-app\",container!=\"\",container!=\"POD\"}[5m])) by (pod)",
+          "legendFormat": "{{pod}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 17 },
+      "id": 21,
+      "title": "Pod Memory Usage (MB)",
+      "type": "timeseries",
+      "fieldConfig": {
+        "defaults": { "unit": "decmbytes" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "sum(container_memory_working_set_bytes{namespace=\"blog-app\",container!=\"\",container!=\"POD\"}) by (pod) / (1024 * 1024)",
           "legendFormat": "{{pod}}",
           "refId": "A"
         }
@@ -52,24 +231,85 @@
     },
     {
       "collapsed": false,
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 6 },
-      "id": 4,
-      "title": "Pod Memory Utilization",
-      "type": "timeseries",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 25 },
+      "id": 103,
+      "title": "Pod Status & Restarts",
+      "type": "row"
+    },
+    {
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 26 },
+      "id": 30,
+      "title": "Pod Status (blog-app)",
+      "type": "table",
+      "options": { "showHeader": true },
       "targets": [
         {
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "sum(container_memory_working_set_bytes{namespace=\"blog-app\",container!=\"\"}) by (pod) / (1024 * 1024)",
-          "legendFormat": "{{pod}} (MB)",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "kube_pod_status_phase{namespace=\"blog-app\"}",
+          "legendFormat": "{{pod}} — {{phase}}",
+          "refId": "A",
+          "instant": true,
+          "format": "table"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "renameByName": { "pod": "Pod", "phase": "Phase", "namespace": "Namespace" }
+          }
+        }
+      ]
+    },
+    {
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 26 },
+      "id": 31,
+      "title": "Container Restarts (blog-app, 24h)",
+      "type": "timeseries",
+      "fieldConfig": {
+        "defaults": { "unit": "short" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "increase(kube_pod_container_status_restarts_total{namespace=\"blog-app\"}[24h])",
+          "legendFormat": "{{pod}}/{{container}}",
           "refId": "A"
+        }
+      ]
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 34 },
+      "id": 104,
+      "title": "Node Status",
+      "type": "row"
+    },
+    {
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 35 },
+      "id": 40,
+      "title": "Node Conditions",
+      "type": "table",
+      "options": { "showHeader": true },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "kube_node_status_condition{status=\"true\"}",
+          "legendFormat": "{{node}} — {{condition}}",
+          "refId": "A",
+          "instant": true,
+          "format": "table"
         }
       ]
     }
   ],
   "schemaVersion": 38,
   "style": "dark",
-  "tags": ["blog-app", "eks"],
+  "tags": ["blog-app", "eks", "kubernetes"],
   "time": { "from": "now-1h", "to": "now" },
-  "title": "EKS Blog App & Cluster Performance",
-  "uid": "eks-blog-app"
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "EKS Blog App — Cluster & Application Dashboard",
+  "uid": "eks-blog-app-v2",
+  "version": 2
 }

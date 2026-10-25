@@ -5,22 +5,34 @@ metadata:
   namespace: blog-app
   labels:
     app: frontend
+    app.kubernetes.io/name: frontend
+    app.kubernetes.io/part-of: blog-app
 spec:
   replicas: 2
   selector:
     matchLabels:
       app: frontend
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 1
   template:
     metadata:
       labels:
         app: frontend
+        app.kubernetes.io/name: frontend
+        app.kubernetes.io/part-of: blog-app
     spec:
       containers:
       - name: frontend
+        # Image tag is updated by GitHub Actions CI on every push
         image: 122384809512.dkr.ecr.us-east-1.amazonaws.com/prod/blog-app:latest
         imagePullPolicy: Always
         ports:
-        - containerPort: 3000
+        - name: http
+          containerPort: 80
+          protocol: TCP
         resources:
           requests:
             cpu: "100m"
@@ -28,3 +40,25 @@ spec:
           limits:
             cpu: "500m"
             memory: "512Mi"
+        startupProbe:
+          httpGet:
+            path: /health
+            port: 80
+          failureThreshold: 10
+          periodSeconds: 5
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 80
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          timeoutSeconds: 3
+          failureThreshold: 3
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 80
+          initialDelaySeconds: 10
+          periodSeconds: 20
+          timeoutSeconds: 5
+          failureThreshold: 3

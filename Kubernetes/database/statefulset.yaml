@@ -1,102 +1,97 @@
 apiVersion: apps/v1
 kind: StatefulSet
-
 metadata:
   name: mysql
   namespace: blog-app
-
+  labels:
+    app: mysql
+    app.kubernetes.io/name: mysql
+    app.kubernetes.io/part-of: blog-app
 spec:
   serviceName: mysql-service
-
   replicas: 1
-
   selector:
     matchLabels:
       app: mysql
-
   template:
-
     metadata:
       labels:
         app: mysql
-
+        app.kubernetes.io/name: mysql
+        app.kubernetes.io/part-of: blog-app
     spec:
-
       containers:
       - name: mysql
         image: mysql:8.0
         imagePullPolicy: IfNotPresent
         ports:
-        - containerPort: 3306
-
+        - name: mysql
+          containerPort: 3306
+          protocol: TCP
         env:
-
         - name: MYSQL_ROOT_PASSWORD
           valueFrom:
             secretKeyRef:
               name: mysql-secret
               key: MYSQL_ROOT_PASSWORD
-
         - name: MYSQL_DATABASE
           valueFrom:
             secretKeyRef:
               name: mysql-secret
               key: MYSQL_DATABASE
-
         - name: MYSQL_USER
           valueFrom:
             secretKeyRef:
               name: mysql-secret
               key: MYSQL_USER
-
         - name: MYSQL_PASSWORD
           valueFrom:
             secretKeyRef:
               name: mysql-secret
               key: MYSQL_PASSWORD
-
         volumeMounts:
-
         - name: mysql-storage
           mountPath: /var/lib/mysql
-
+        # Mount the init SQL so the schema is created on first start
+        - name: init-sql
+          mountPath: /docker-entrypoint-initdb.d/init.sql
+          subPath: init.sql
         resources:
-
           requests:
-            cpu: 200m
-            memory: 256Mi
-
+            cpu: "200m"
+            memory: "256Mi"
           limits:
-            cpu: 500m
-            memory: 512Mi
-
+            cpu: "500m"
+            memory: "512Mi"
         readinessProbe:
-
           exec:
             command:
             - mysqladmin
             - ping
             - "-h"
             - "127.0.0.1"
-
           initialDelaySeconds: 20
           periodSeconds: 10
-
+          timeoutSeconds: 5
+          failureThreshold: 3
         livenessProbe:
-
           exec:
             command:
             - mysqladmin
             - ping
             - "-h"
             - "127.0.0.1"
-
           initialDelaySeconds: 40
           periodSeconds: 20
-
+          timeoutSeconds: 5
+          failureThreshold: 3
       volumes:
-
       - name: mysql-storage
-
         persistentVolumeClaim:
           claimName: mysql-pvc
+      - name: init-sql
+        configMap:
+          name: mysql-config
+          items:
+          - key: init.sql
+            path: init.sql

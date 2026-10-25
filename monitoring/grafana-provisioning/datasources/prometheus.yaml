@@ -1,0 +1,19 @@
+# Grafana datasource provisioning — auto-configures Prometheus
+# Place this file at: /etc/grafana/provisioning/datasources/prometheus.yaml
+# When using kube-prometheus-stack Helm chart, configure via values.yaml instead.
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    uid: prometheus
+    access: proxy
+    # In-cluster URL when Grafana and Prometheus are in the same namespace
+    url: http://prometheus-kube-prometheus-prometheus.monitoring.svc.cluster.local:9090
+    isDefault: true
+    jsonData:
+      timeInterval: "30s"
+      httpMethod: POST
+      # Enables Prometheus Alertmanager integration
+      alertmanagerUid: ""
+    editable: true

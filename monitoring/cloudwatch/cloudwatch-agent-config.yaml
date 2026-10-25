@@ -1,0 +1,41 @@
+# CloudWatch Agent ConfigMap for EKS Container Insights
+# Apply with: kubectl apply -f monitoring/cloudwatch/cloudwatch-agent-config.yaml
+#
+# Prerequisites:
+#   1. Attach CloudWatchAgentServerPolicy to the EKS node IAM role (or use IRSA).
+#   2. Create the amazon-cloudwatch namespace:
+#      kubectl create namespace amazon-cloudwatch
+#   3. Install the CloudWatch agent DaemonSet:
+#      kubectl apply -f https://raw.githubusercontent.com/aws-samples/amazon-cloudwatch-container-insights/latest/k8s-deployment-manifest-templates/deployment-mode/daemonset/container-insights-monitoring/cloudwatch-namespace.yaml
+#      kubectl apply -f https://raw.githubusercontent.com/aws-samples/amazon-cloudwatch-container-insights/latest/k8s-deployment-manifest-templates/deployment-mode/daemonset/container-insights-monitoring/cwagent/cwagent-serviceaccount.yaml
+#      kubectl apply -f monitoring/cloudwatch/cloudwatch-agent-config.yaml
+#      kubectl apply -f https://raw.githubusercontent.com/aws-samples/amazon-cloudwatch-container-insights/latest/k8s-deployment-manifest-templates/deployment-mode/daemonset/container-insights-monitoring/cwagent/cwagent-daemonset.yaml
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cwagentconfig
+  namespace: amazon-cloudwatch
+data:
+  cwagentconfig.json: |
+    {
+      "logs": {
+        "metrics_collected": {
+          "kubernetes": {
+            "cluster_name": "blog-prod-eks",
+            "metrics_collection_interval": 60
+          }
+        },
+        "force_flush_interval": 5
+      },
+      "metrics": {
+        "namespace": "ContainerInsights",
+        "metrics_collected": {
+          "kubernetes": {
+            "cluster_name": "blog-prod-eks",
+            "metrics_collection_interval": 60,
+            "enhanced_container_insights": true
+          }
+        }
+      }
+    }

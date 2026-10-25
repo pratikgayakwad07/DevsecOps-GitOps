@@ -59,5 +59,10 @@ app.delete('/api/posts/:id', (req, res) => {
   });
 });
 
+// Health check endpoint — used by Kubernetes liveness and readiness probes
+app.get('/health', (req, res) => {
+  res.status(200).json({ status: 'ok' });
+});
+
 const port = process.env.PORT || 5003;
 app.listen(port, () => console.log(`Server running on port ${port}`));

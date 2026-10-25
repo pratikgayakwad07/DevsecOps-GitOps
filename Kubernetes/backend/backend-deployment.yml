@@ -5,22 +5,46 @@ metadata:
   namespace: blog-app
   labels:
     app: backend
+    app.kubernetes.io/name: backend
+    app.kubernetes.io/part-of: blog-app
 spec:
   replicas: 2
   selector:
     matchLabels:
       app: backend
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 1
   template:
     metadata:
       labels:
         app: backend
+        app.kubernetes.io/name: backend
+        app.kubernetes.io/part-of: blog-app
     spec:
+      # Wait for MySQL to be ready before starting the backend
+      initContainers:
+      - name: wait-for-mysql
+        image: busybox:1.36
+        command:
+        - sh
+        - -c
+        - |
+          until nc -z mysql-service 3306; do
+            echo "Waiting for MySQL..."; sleep 5;
+          done
+          echo "MySQL is up."
       containers:
       - name: backend
+        # Image tag is updated by GitHub Actions CI on every push
         image: 122384809512.dkr.ecr.us-east-1.amazonaws.com/prod/backend-blog-app:latest
         imagePullPolicy: Always
         ports:
-        - containerPort: 5003
+        - name: http
+          containerPort: 5003
+          protocol: TCP
         env:
         - name: DB_HOST
           valueFrom:
@@ -56,3 +80,26 @@ spec:
           limits:
             cpu: "500m"
             memory: "512Mi"
+        # Startup probe — gives the app up to 60s to start before readiness/liveness kick in
+        startupProbe:
+          httpGet:
+            path: /health
+            port: 5003
+          failureThreshold: 12
+          periodSeconds: 5
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 5003
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          timeoutSeconds: 3
+          failureThreshold: 3
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 5003
+          initialDelaySeconds: 15
+          periodSeconds: 20
+          timeoutSeconds: 5
+          failureThreshold: 3
