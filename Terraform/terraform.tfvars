@@ -7,7 +7,7 @@ environment        = "dev"
 
 # GitHub OIDC IAM role
 role_name          = "github-actions-blog-app-role"
-repository_pattern = "repo:pratikgayakwad07/DevsecOps-GitOps:*"
+repository_pattern = "repo:pratikgayakwad07@148746650/DevsecOps-GitOps@1421825825"
 
 # VPC configuration
 vpc_name           = "blog-vpc"
