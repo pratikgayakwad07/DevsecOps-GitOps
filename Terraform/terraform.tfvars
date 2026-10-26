@@ -7,7 +7,7 @@ environment        = "dev"
 
 # GitHub OIDC IAM role
 role_name          = "github-actions-blog-app-role"
-repository_pattern = "repo:pratikgayakwad07@148746650/DevsecOps-GitOps@1421825825"
+repository_pattern = "repo:pratikgayakwad07@148746650/DevsecOps-GitOps@1421825825:*"
 
 # VPC configuration
 vpc_name           = "blog-vpc"
@@ -19,7 +19,7 @@ private_subnets    = ["10.0.101.0/24", "10.0.102.0/24", "10.0.103.0/24"]
 # EKS cluster configuration
 cluster_name       = "blog-prod-eks"
 cluster_version    = "1.31"
-instance_type      = "t3.micro"
+instance_type      = "t3.medium"
 
 # ECR repository name (optional – used in the ecr module if you expose it later)
 # ecr_repository_name = "blog-app-ecr"
