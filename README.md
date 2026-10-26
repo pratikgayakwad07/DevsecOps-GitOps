@@ -637,3 +637,13 @@ terraform destroy
 ---
 
 *Built by a DevOps Intern as part of an AWS EKS CI/CD and Monitoring assignment.*
+
+
+## Live Deployment URLs
+
+| Service | URL | Credentials |
+|---------|-----|-------------|
+| Blog Application | http://k8s-blogapp-blogappi-7a85bee9fb-496479600.us-east-1.elb.amazonaws.com | — |
+| Grafana | http://a6390d9a088804367b6dbf7d6724904d-671051682.us-east-1.elb.amazonaws.com | admin / Admin@123 |
+| Prometheus | http://a011a39a3318f425da392a08e0cf2f8b-196065776.us-east-1.elb.amazonaws.com:9090 | — |
+| Argo CD | https://a41364aceacef4310b718680e68ec1ba-1929863741.us-east-1.elb.amazonaws.com | admin / Q31DPa6mTiJwwyJB |
