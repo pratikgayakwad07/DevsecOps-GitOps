@@ -167,7 +167,7 @@ jobs:
         with:
           # Use a PAT (GITOPS_TOKEN) so the commit pushed back can trigger Argo CD
           # Falls back to GITHUB_TOKEN for the git push (Argo CD detects the change via polling)
-          token: ${{ secrets.GITOPS_TOKEN || secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.GITOPS_TOKEN || secrets.GH_TOKEN }}
 
       - name: Set Image Tag
         id: meta
