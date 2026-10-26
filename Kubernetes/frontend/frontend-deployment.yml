@@ -27,7 +27,7 @@ spec:
       containers:
       - name: frontend
         # Image tag is updated by GitHub Actions CI on every push
-        image: 122384809512.dkr.ecr.us-east-1.amazonaws.com/prod/blog-app:bad3dcc5
+        image: 122384809512.dkr.ecr.us-east-1.amazonaws.com/prod/blog-app:de3e97da
         imagePullPolicy: Always
         ports:
         - name: http
