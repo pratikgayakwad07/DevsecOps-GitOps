@@ -20,16 +20,6 @@ spec:
         app.kubernetes.io/name: mysql
         app.kubernetes.io/part-of: blog-app
     spec:
-      # Pin to us-east-1a so the EBS PVC and pod are always in the same AZ
-      affinity:
-        nodeAffinity:
-          requiredDuringSchedulingIgnoredDuringExecution:
-            nodeSelectorTerms:
-            - matchExpressions:
-              - key: topology.kubernetes.io/zone
-                operator: In
-                values:
-                - us-east-1a
       containers:
       - name: mysql
         image: mysql:8.0

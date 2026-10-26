@@ -4,7 +4,12 @@
   "main": "server.js",
   "scripts": {
     "dev": "nodemon server.js",
-    "start": "node server.js"
+    "start": "node server.js",
+    "test": "jest --testPathPattern=test/ --forceExit"
+  },
+  "jest": {
+    "testEnvironment": "node",
+    "testTimeout": 10000
   },
   "dependencies": {
     "cors": "^2.8.5",
@@ -12,6 +17,7 @@
     "mysql2": "^3.15.0"
   },
   "devDependencies": {
+    "jest": "^29.7.0",
     "nodemon": "^3.0.1"
   }
 }

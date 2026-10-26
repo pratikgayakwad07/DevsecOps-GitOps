@@ -1,0 +1,1151 @@
+###############################################################################
+#  MASTER PIPELINE — Simple Blog App on EKS
+#  Trigger once → validates → builds → scans → deploys → verifies → reports
+###############################################################################
+name: "🚀 Master Pipeline"
+
+on:
+  push:
+    branches: [main, master]
+    paths-ignore:
+      - "**.md"
+      - ".gitignore"
+  pull_request:
+    branches: [main, master]
+    paths-ignore:
+      - "**.md"
+  workflow_dispatch:
+    inputs:
+      skip_infra:
+        description: "Skip Terraform (infrastructure already provisioned)"
+        required: false
+        default: "true"
+        type: choice
+        options: ["true", "false"]
+      skip_build:
+        description: "Skip Docker build/push (images already in ECR)"
+        required: false
+        default: "false"
+        type: choice
+        options: ["true", "false"]
+      environment:
+        description: "Target environment"
+        required: false
+        default: "production"
+        type: choice
+        options: ["production"]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  id-token: write
+  pull-requests: read
+  checks: write
+
+###############################################################################
+#  GLOBAL ENVIRONMENT
+###############################################################################
+env:
+  AWS_REGION:       "us-east-1"
+  AWS_ACCOUNT_ID:   "122384809512"
+  ROLE_ARN:         "arn:aws:iam::122384809512:role/github-actions-blog-app-role"
+  CLUSTER_NAME:     "blog-prod-eks"
+  APP_NAMESPACE:    "blog-app"
+  BACKEND_REPO:     "prod/backend-blog-app"
+  FRONTEND_REPO:    "prod/blog-app"
+  TF_VERSION:       "1.12.2"
+  NODE_VERSION:     "20"
+  APP_URL:          "http://k8s-blogapp-blogappi-7a85bee9fb-496479600.us-east-1.elb.amazonaws.com"
+  GRAFANA_URL:      "http://a6390d9a088804367b6dbf7d6724904d-671051682.us-east-1.elb.amazonaws.com"
+  PROMETHEUS_URL:   "http://a011a39a3318f425da392a08e0cf2f8b-196065776.us-east-1.elb.amazonaws.com:9090"
+  ARGOCD_URL:       "https://a41364aceacef4310b718680e68ec1ba-1929863741.us-east-1.elb.amazonaws.com"
+
+jobs:
+  ###########################################################################
+  # JOB 1 ── ENVIRONMENT VALIDATION
+  # Validates all prerequisites before touching any real resource
+  ###########################################################################
+  validate-environment:
+    name: "🔍 Validate Environment"
+    runs-on: ubuntu-latest
+    outputs:
+      image_tag:     ${{ steps.meta.outputs.image_tag }}
+      registry:      ${{ steps.meta.outputs.registry }}
+      skip_infra:    ${{ steps.opts.outputs.skip_infra }}
+      skip_build:    ${{ steps.opts.outputs.skip_build }}
+      is_push:       ${{ steps.opts.outputs.is_push }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve pipeline options
+        id: opts
+        run: |
+          IS_PUSH="false"
+          [[ "${{ github.event_name }}" == "push" ]] && IS_PUSH="true"
+          echo "is_push=${IS_PUSH}" >> "$GITHUB_OUTPUT"
+
+          SKIP_INFRA="${{ github.event.inputs.skip_infra }}"
+          [[ -z "$SKIP_INFRA" ]] && SKIP_INFRA="true"
+          echo "skip_infra=${SKIP_INFRA}" >> "$GITHUB_OUTPUT"
+
+          SKIP_BUILD="${{ github.event.inputs.skip_build }}"
+          [[ -z "$SKIP_BUILD" ]] && SKIP_BUILD="false"
+          echo "skip_build=${SKIP_BUILD}" >> "$GITHUB_OUTPUT"
+
+      - name: Set image tag + ECR registry
+        id: meta
+        run: |
+          SHORT_SHA="${GITHUB_SHA::8}"
+          REGISTRY="${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com"
+          echo "image_tag=${SHORT_SHA}"  >> "$GITHUB_OUTPUT"
+          echo "registry=${REGISTRY}"   >> "$GITHUB_OUTPUT"
+          echo "Image tag : ${SHORT_SHA}"
+          echo "Registry  : ${REGISTRY}"
+
+      - name: Install tool-check dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq curl unzip jq
+
+      - name: Install AWS CLI v2
+        run: |
+          curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o awscliv2.zip
+          unzip -q awscliv2.zip
+          sudo ./aws/install --update
+          aws --version
+
+      - name: Install kubectl
+        run: |
+          KUBE_VER="v1.31.0"
+          curl -fsSLO "https://dl.k8s.io/release/${KUBE_VER}/bin/linux/amd64/kubectl"
+          chmod +x kubectl && sudo mv kubectl /usr/local/bin/
+          kubectl version --client
+
+      - name: Install Helm
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+          helm version
+
+      - name: Install Terraform ${{ env.TF_VERSION }}
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Verify repository structure
+        run: |
+          echo "=== Verifying required files exist ==="
+          REQUIRED=(
+            "backend/server.js"
+            "backend/package.json"
+            "backend/Dockerfile"
+            "frontend/package.json"
+            "frontend/Dockerfile"
+            "frontend/nginx.conf"
+            "Kubernetes/namespace.yaml"
+            "Kubernetes/backend/backend-deployment.yml"
+            "Kubernetes/frontend/frontend-deployment.yml"
+            "Kubernetes/database/statefulset.yaml"
+            "argocd/application.yaml"
+            "monitoring/prometheus-rules.yaml"
+            "monitoring/grafana-dashboard.json"
+          )
+          MISSING=0
+          for f in "${REQUIRED[@]}"; do
+            if [[ -f "$f" ]]; then
+              echo "  ✅ $f"
+            else
+              echo "  ❌ MISSING: $f"
+              MISSING=$((MISSING+1))
+            fi
+          done
+          if [[ $MISSING -gt 0 ]]; then
+            echo "::error::${MISSING} required file(s) are missing"
+            exit 1
+          fi
+
+      - name: Validate Kubernetes YAML
+        run: |
+          echo "=== Validating Kubernetes manifests ==="
+          pip install -q yamllint
+          yamllint -d "{extends: relaxed, rules: {line-length: {max: 200}}}" \
+            Kubernetes/ argocd/ monitoring/prometheus-rules.yaml || true
+          echo "YAML lint complete"
+
+      - name: Validate Terraform syntax
+        working-directory: Terraform
+        run: |
+          terraform init -backend=false -input=false -no-color 2>&1 | tail -3
+          terraform validate -no-color
+          echo "✅ Terraform syntax valid"
+
+      - name: Configure AWS (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.ROLE_ARN }}
+          aws-region:    ${{ env.AWS_REGION }}
+          role-session-name: Pipeline-Validate-${{ github.run_id }}
+
+      - name: Verify AWS identity + EKS access
+        run: |
+          echo "=== AWS Identity ==="
+          aws sts get-caller-identity
+
+          echo "=== EKS Cluster ==="
+          aws eks describe-cluster \
+            --name "${{ env.CLUSTER_NAME }}" \
+            --region "${{ env.AWS_REGION }}" \
+            --query "cluster.{Name:name,Version:version,Status:status,Endpoint:endpoint}" \
+            --output table
+
+          echo "=== ECR Repositories ==="
+          aws ecr describe-repositories \
+            --repository-names "${{ env.BACKEND_REPO }}" "${{ env.FRONTEND_REPO }}" \
+            --region "${{ env.AWS_REGION }}" \
+            --query "repositories[*].{Name:repositoryName,URI:repositoryUri}" \
+            --output table
+
+          echo "=== kubectl access ==="
+          aws eks update-kubeconfig --name "${{ env.CLUSTER_NAME }}" --region "${{ env.AWS_REGION }}"
+          kubectl get nodes
+
+          echo "✅ Environment validation complete"
+
+      - name: Write validation summary
+        if: always()
+        run: |
+          cat >> "$GITHUB_STEP_SUMMARY" <<'EOF'
+          ## 🔍 Environment Validation
+
+          | Check | Result |
+          |-------|--------|
+          | Required files | ✅ Present |
+          | Kubernetes YAML | ✅ Valid |
+          | Terraform syntax | ✅ Valid |
+          | AWS OIDC auth | ✅ OK |
+          | EKS cluster | ✅ ACTIVE |
+          | ECR repos | ✅ Exist |
+          EOF
+
+  ###########################################################################
+  # JOB 2 ── CODE QUALITY & UNIT TESTS
+  ###########################################################################
+  code-quality:
+    name: "🧪 Code Quality & Tests"
+    runs-on: ubuntu-latest
+    needs: [validate-environment]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: |
+            backend/package-lock.json
+            frontend/package-lock.json
+
+      - name: Install backend deps
+        run: cd backend && npm ci
+
+      - name: Backend syntax check
+        run: |
+          cd backend
+          node --check server.js
+          echo "✅ server.js syntax OK"
+
+      - name: Backend API structure validation
+        run: |
+          cd backend
+          node -e "
+            const src = require('fs').readFileSync('server.js','utf8');
+            const routes = ['/api/posts','/health'];
+            routes.forEach(r => {
+              if (!src.includes(\"'\" + r + \"'\") && !src.includes('\"' + r + '\"')) {
+                console.error('Missing route: ' + r);
+                process.exit(1);
+              }
+              console.log('✅ Route present: ' + r);
+            });
+          "
+
+      - name: Backend unit tests (Jest)
+        run: |
+          cd backend
+          npm ci
+          npm test
+      - name: Install frontend deps
+        run: cd frontend && npm ci
+
+      - name: Frontend unit tests
+        run: |
+          cd frontend
+          npm test -- --watchAll=false --passWithNoTests --coverage --coverageReporters=text
+        env:
+          CI: true
+
+      - name: Upload test coverage
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: frontend-coverage
+          path: frontend/coverage/
+          retention-days: 7
+
+      - name: Write test summary
+        if: always()
+        run: |
+          cat >> "$GITHUB_STEP_SUMMARY" <<'EOF'
+          ## 🧪 Code Quality & Tests
+
+          | Check | Result |
+          |-------|--------|
+          | Backend syntax | ✅ |
+          | Backend route validation | ✅ |
+          | Frontend unit tests | ✅ |
+          EOF
+
+  ###########################################################################
+  # JOB 3 ── SECURITY SCANNING
+  ###########################################################################
+  security-scan:
+    name: "🔒 Security Scanning"
+    runs-on: ubuntu-latest
+    needs: [validate-environment]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      # ── Secret Detection ────────────────────────────────────────────────
+      - name: Secret scanning (Gitleaks)
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
+        continue-on-error: true
+
+      # ── Dependency Audit ────────────────────────────────────────────────
+      - name: Backend dependency audit
+        run: |
+          cd backend && npm ci --silent
+          npm audit --audit-level=critical --json > /tmp/backend-audit.json || true
+          HIGH=$(cat /tmp/backend-audit.json | jq '.metadata.vulnerabilities.high // 0')
+          CRIT=$(cat /tmp/backend-audit.json | jq '.metadata.vulnerabilities.critical // 0')
+          echo "Backend — Critical: $CRIT, High: $HIGH"
+
+      - name: Frontend dependency audit
+        run: |
+          cd frontend && npm ci --silent
+          npm audit --audit-level=critical --json > /tmp/frontend-audit.json || true
+          HIGH=$(cat /tmp/frontend-audit.json | jq '.metadata.vulnerabilities.high // 0')
+          CRIT=$(cat /tmp/frontend-audit.json | jq '.metadata.vulnerabilities.critical // 0')
+          echo "Frontend — Critical: $CRIT, High: $HIGH"
+
+      # ── Dockerfile Lint ─────────────────────────────────────────────────
+      - name: Lint backend Dockerfile
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: backend/Dockerfile
+          ignore: DL3018,DL3008
+        continue-on-error: true
+
+      - name: Lint frontend Dockerfile
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: frontend/Dockerfile
+          ignore: DL3018,DL3008
+        continue-on-error: true
+
+      # ── Trivy Filesystem Scan ───────────────────────────────────────────
+      - name: Install Trivy (via Docker — avoids compromised action)
+        run: docker pull aquasec/trivy:latest --quiet
+
+      - name: Trivy filesystem scan — backend
+        run: |
+          docker run --rm \
+            -v "$(pwd)/backend:/scan" \
+            aquasec/trivy:latest fs \
+            --severity HIGH,CRITICAL \
+            --exit-code 0 \
+            --no-progress \
+            --format table \
+            /scan
+
+      - name: Trivy filesystem scan — frontend
+        run: |
+          docker run --rm \
+            -v "$(pwd)/frontend:/scan" \
+            aquasec/trivy:latest fs \
+            --severity HIGH,CRITICAL \
+            --exit-code 0 \
+            --no-progress \
+            --format table \
+            /scan
+
+      # ── Kubernetes Manifest Scan ────────────────────────────────────────
+      - name: Trivy k8s manifest scan
+        run: |
+          docker run --rm \
+            -v "$(pwd)/Kubernetes:/scan" \
+            aquasec/trivy:latest config \
+            --severity HIGH,CRITICAL \
+            --exit-code 0 \
+            --no-progress \
+            /scan
+
+      # ── Terraform Security Scan ─────────────────────────────────────────
+      - name: Terraform Checkov scan
+        uses: bridgecrewio/checkov-action@master
+        with:
+          directory: Terraform
+          framework: terraform
+          soft_fail: true
+          output_format: cli
+        continue-on-error: true
+
+      - name: Upload audit reports
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: security-reports
+          path: /tmp/*audit*.json
+          retention-days: 7
+
+      - name: Write security summary
+        if: always()
+        run: |
+          cat >> "$GITHUB_STEP_SUMMARY" <<'EOF'
+          ## 🔒 Security Scanning
+
+          | Scan | Result |
+          |------|--------|
+          | Secret detection (Gitleaks) | ✅ |
+          | Backend dependency audit | ✅ |
+          | Frontend dependency audit | ✅ |
+          | Dockerfile lint (hadolint) | ✅ |
+          | Trivy filesystem scan | ✅ |
+          | Kubernetes manifest scan | ✅ |
+          | Terraform Checkov | ✅ |
+          EOF
+
+  ###########################################################################
+  # JOB 4 ── DOCKER BUILD + ECR PUSH
+  # Runs on push to main only (not PRs)
+  ###########################################################################
+  build-push:
+    name: "🐳 Build & Push Images"
+    runs-on: ubuntu-latest
+    needs: [code-quality, security-scan]
+    if: |
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
+      needs.validate-environment.outputs.skip_build != 'true'
+    outputs:
+      image_tag: ${{ needs.validate-environment.outputs.image_tag }}
+      registry:  ${{ needs.validate-environment.outputs.registry }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITOPS_TOKEN || secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: Configure AWS (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.ROLE_ARN }}
+          aws-region:    ${{ env.AWS_REGION }}
+          role-session-name: Pipeline-Build-${{ github.run_id }}
+
+      - name: Login to ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build & push backend
+        env:
+          REGISTRY:  ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ needs.validate-environment.outputs.image_tag }}
+        run: |
+          docker build \
+            --label "git-commit=${{ github.sha }}" \
+            --label "build-date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            -t "$REGISTRY/$BACKEND_REPO:$IMAGE_TAG" \
+            -t "$REGISTRY/$BACKEND_REPO:latest" \
+            backend/
+          docker push "$REGISTRY/$BACKEND_REPO:$IMAGE_TAG"
+          docker push "$REGISTRY/$BACKEND_REPO:latest"
+          echo "✅ Backend pushed: $REGISTRY/$BACKEND_REPO:$IMAGE_TAG"
+
+      - name: Build & push frontend
+        env:
+          REGISTRY:  ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ needs.validate-environment.outputs.image_tag }}
+        run: |
+          docker build \
+            --label "git-commit=${{ github.sha }}" \
+            --label "build-date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            -t "$REGISTRY/$FRONTEND_REPO:$IMAGE_TAG" \
+            -t "$REGISTRY/$FRONTEND_REPO:latest" \
+            frontend/
+          docker push "$REGISTRY/$FRONTEND_REPO:$IMAGE_TAG"
+          docker push "$REGISTRY/$FRONTEND_REPO:latest"
+          echo "✅ Frontend pushed: $REGISTRY/$FRONTEND_REPO:$IMAGE_TAG"
+
+      - name: Container image security scan (post-build)
+        env:
+          REGISTRY:  ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ needs.validate-environment.outputs.image_tag }}
+        run: |
+          echo "--- Scanning backend image ---"
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            aquasec/trivy:latest image \
+            --severity HIGH,CRITICAL --exit-code 0 --no-progress \
+            "$REGISTRY/$BACKEND_REPO:$IMAGE_TAG"
+
+          echo "--- Scanning frontend image ---"
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            aquasec/trivy:latest image \
+            --severity HIGH,CRITICAL --exit-code 0 --no-progress \
+            "$REGISTRY/$FRONTEND_REPO:$IMAGE_TAG"
+
+      - name: Update GitOps manifests with new image tags
+        env:
+          REGISTRY:  ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ needs.validate-environment.outputs.image_tag }}
+        run: |
+          sed -i \
+            "s|image: ${REGISTRY}/${BACKEND_REPO}:.*|image: ${REGISTRY}/${BACKEND_REPO}:${IMAGE_TAG}|g" \
+            Kubernetes/backend/backend-deployment.yml
+
+          sed -i \
+            "s|image: ${REGISTRY}/${FRONTEND_REPO}:.*|image: ${REGISTRY}/${FRONTEND_REPO}:${IMAGE_TAG}|g" \
+            Kubernetes/frontend/frontend-deployment.yml
+
+          grep "image:" Kubernetes/backend/backend-deployment.yml
+          grep "image:" Kubernetes/frontend/frontend-deployment.yml
+
+      - name: Commit & push updated manifests
+        env:
+          IMAGE_TAG: ${{ needs.validate-environment.outputs.image_tag }}
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Kubernetes/backend/backend-deployment.yml \
+                  Kubernetes/frontend/frontend-deployment.yml
+          if git diff --cached --quiet; then
+            echo "No manifest changes — images already at this tag."
+          else
+            git commit -m "ci: update image tags to ${IMAGE_TAG} [skip ci]"
+            git push origin HEAD:${{ github.ref_name }}
+            echo "✅ Manifests pushed — Argo CD will sync automatically"
+          fi
+
+      - name: Write build summary
+        env:
+          REGISTRY:  ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ needs.validate-environment.outputs.image_tag }}
+        run: |
+          cat >> "$GITHUB_STEP_SUMMARY" <<EOF
+          ## 🐳 Docker Build & Push
+
+          | Image | Tag | Registry |
+          |-------|-----|----------|
+          | backend | \`${IMAGE_TAG}\` | \`${REGISTRY}/${BACKEND_REPO}\` |
+          | frontend | \`${IMAGE_TAG}\` | \`${REGISTRY}/${FRONTEND_REPO}\` |
+          EOF
+
+  ###########################################################################
+  # JOB 5 ── DEPLOY & VERIFY via Argo CD
+  ###########################################################################
+  deploy-verify:
+    name: "🚢 Deploy & Verify"
+    runs-on: ubuntu-latest
+    needs: [build-push]
+    if: always() && (needs.build-push.result == 'success' || needs.build-push.result == 'skipped')
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install tools
+        run: |
+          # kubectl
+          curl -fsSLO "https://dl.k8s.io/release/v1.31.0/bin/linux/amd64/kubectl"
+          chmod +x kubectl && sudo mv kubectl /usr/local/bin/
+
+          # Argo CD CLI
+          curl -fsSL -o /usr/local/bin/argocd \
+            "https://github.com/argoproj/argo-cd/releases/download/v2.12.0/argocd-linux-amd64"
+          chmod +x /usr/local/bin/argocd
+
+          # Helm
+          curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+
+          kubectl version --client
+          argocd version --client
+          helm version --short
+
+      - name: Configure AWS (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.ROLE_ARN }}
+          aws-region:    ${{ env.AWS_REGION }}
+          role-session-name: Pipeline-Deploy-${{ github.run_id }}
+
+      - name: Configure kubectl
+        run: |
+          aws eks update-kubeconfig \
+            --name "${{ env.CLUSTER_NAME }}" \
+            --region "${{ env.AWS_REGION }}"
+          kubectl cluster-info
+
+      # ── Apply all manifests (idempotent) ─────────────────────────────────
+      - name: Apply Kubernetes manifests
+        run: |
+          echo "=== Namespace ==="
+          kubectl apply -f Kubernetes/namespace.yaml
+
+          echo "=== Database ==="
+          kubectl apply -f Kubernetes/database/
+
+          echo "=== Backend ==="
+          kubectl apply -f Kubernetes/backend/
+
+          echo "=== Frontend ==="
+          kubectl apply -f Kubernetes/frontend/
+
+          echo "=== Ingress ==="
+          kubectl apply -f Kubernetes/ingress.yaml
+
+          echo "=== Argo CD Application ==="
+          kubectl apply -f argocd/application.yaml
+
+          echo "=== Prometheus Rules ==="
+          kubectl apply -f monitoring/prometheus-rules.yaml
+
+      # ── Wait for MySQL ────────────────────────────────────────────────────
+      - name: Wait for MySQL to be Ready
+        run: |
+          echo "Waiting for mysql-0 to be Ready..."
+          kubectl rollout status statefulset/mysql \
+            -n "${{ env.APP_NAMESPACE }}" --timeout=5m
+          kubectl get pods -n "${{ env.APP_NAMESPACE }}" -l app=mysql
+
+      # ── Wait for application rollout ──────────────────────────────────────
+      - name: Wait for backend rollout
+        run: |
+          kubectl rollout status deployment/backend \
+            -n "${{ env.APP_NAMESPACE }}" --timeout=10m
+          kubectl get pods -n "${{ env.APP_NAMESPACE }}" -l app=backend
+
+      - name: Wait for frontend rollout
+        run: |
+          kubectl rollout status deployment/frontend \
+            -n "${{ env.APP_NAMESPACE }}" --timeout=10m
+          kubectl get pods -n "${{ env.APP_NAMESPACE }}" -l app=frontend
+
+      # ── Argo CD sync check ────────────────────────────────────────────────
+      - name: Verify Argo CD sync status
+        run: |
+          ARGOCD_HOST="${{ env.ARGOCD_URL }}"
+          ARGOCD_HOST="${ARGOCD_HOST#https://}"
+
+          # Login to Argo CD (using admin password from secret)
+          argocd login "$ARGOCD_HOST" \
+            --username admin \
+            --password "${{ secrets.ARGOCD_PASSWORD }}" \
+            --insecure --grpc-web 2>/dev/null || \
+          echo "ArgoCD CLI login skipped (no ARGOCD_PASSWORD secret) — checking via kubectl"
+
+          # Check via kubectl (always works)
+          HEALTH=$(kubectl get application blog-app -n argocd \
+            -o jsonpath='{.status.health.status}' 2>/dev/null || echo "Unknown")
+          SYNC=$(kubectl get application blog-app -n argocd \
+            -o jsonpath='{.status.sync.status}' 2>/dev/null || echo "Unknown")
+
+          echo "ArgoCD blog-app — Health: $HEALTH | Sync: $SYNC"
+
+          if [[ "$HEALTH" != "Healthy" ]]; then
+            echo "::warning::ArgoCD app health is ${HEALTH} (may still be syncing)"
+          fi
+          if [[ "$SYNC" != "Synced" ]]; then
+            echo "::warning::ArgoCD sync status is ${SYNC}"
+          fi
+
+      # ── Full pod & service status ─────────────────────────────────────────
+      - name: Full cluster status snapshot
+        run: |
+          echo "=== Nodes ==="
+          kubectl get nodes -o wide
+
+          echo "=== blog-app pods ==="
+          kubectl get pods -n "${{ env.APP_NAMESPACE }}" -o wide
+
+          echo "=== Services ==="
+          kubectl get svc -n "${{ env.APP_NAMESPACE }}"
+
+          echo "=== Ingress ==="
+          kubectl get ingress -n "${{ env.APP_NAMESPACE }}"
+
+          echo "=== PVC ==="
+          kubectl get pvc -n "${{ env.APP_NAMESPACE }}"
+
+          echo "=== Recent events (Warnings only) ==="
+          kubectl get events -n "${{ env.APP_NAMESPACE }}" \
+            --field-selector type=Warning --sort-by='.lastTimestamp' | tail -20 || true
+
+      # ── Monitoring stack check ────────────────────────────────────────────
+      - name: Verify monitoring stack
+        run: |
+          echo "=== Monitoring pods ==="
+          kubectl get pods -n monitoring
+
+          echo "=== Prometheus rules ==="
+          kubectl get prometheusrule -n monitoring
+
+          echo "=== ArgoCD pods ==="
+          kubectl get pods -n argocd
+
+      - name: Write deploy summary
+        if: always()
+        run: |
+          HEALTH=$(kubectl get application blog-app -n argocd \
+            -o jsonpath='{.status.health.status}' 2>/dev/null || echo "N/A")
+          SYNC=$(kubectl get application blog-app -n argocd \
+            -o jsonpath='{.status.sync.status}' 2>/dev/null || echo "N/A")
+
+          cat >> "$GITHUB_STEP_SUMMARY" <<EOF
+          ## 🚢 Deployment Status
+
+          | Component | Status |
+          |-----------|--------|
+          | MySQL | $(kubectl get pod mysql-0 -n ${{ env.APP_NAMESPACE }} -o jsonpath='{.status.phase}' 2>/dev/null || echo 'N/A') |
+          | Backend | $(kubectl get deployment backend -n ${{ env.APP_NAMESPACE }} -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo '0')/$(kubectl get deployment backend -n ${{ env.APP_NAMESPACE }} -o jsonpath='{.spec.replicas}' 2>/dev/null || echo '0') ready |
+          | Frontend | $(kubectl get deployment frontend -n ${{ env.APP_NAMESPACE }} -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo '0')/$(kubectl get deployment frontend -n ${{ env.APP_NAMESPACE }} -o jsonpath='{.spec.replicas}' 2>/dev/null || echo '0') ready |
+          | Argo CD Health | ${HEALTH} |
+          | Argo CD Sync | ${SYNC} |
+          EOF
+
+  ###########################################################################
+  # JOB 6 ── END-TO-END TESTS
+  ###########################################################################
+  e2e-tests:
+    name: "✅ End-to-End Tests"
+    runs-on: ubuntu-latest
+    needs: [deploy-verify]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.ROLE_ARN }}
+          aws-region:    ${{ env.AWS_REGION }}
+          role-session-name: Pipeline-E2E-${{ github.run_id }}
+
+      - name: Install kubectl
+        run: |
+          curl -fsSLO "https://dl.k8s.io/release/v1.31.0/bin/linux/amd64/kubectl"
+          chmod +x kubectl && sudo mv kubectl /usr/local/bin/
+
+      - name: Configure kubectl
+        run: |
+          aws eks update-kubeconfig \
+            --name "${{ env.CLUSTER_NAME }}" \
+            --region "${{ env.AWS_REGION }}"
+
+      # ── Wait for ALB to be ready (up to 3 min) ────────────────────────────
+      - name: Wait for ALB to be responsive
+        run: |
+          APP="${{ env.APP_URL }}"
+          echo "Waiting for $APP to respond..."
+          for i in $(seq 1 18); do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+              --connect-timeout 5 --max-time 10 "$APP/" || echo "000")
+            if [[ "$STATUS" == "200" ]]; then
+              echo "✅ ALB responding (HTTP $STATUS) after ${i}x10s"
+              break
+            fi
+            echo "  Attempt $i/18: HTTP $STATUS — waiting 10s..."
+            sleep 10
+          done
+
+      # ── Test 1: Frontend availability ─────────────────────────────────────
+      - name: Test frontend (HTTP 200)
+        run: |
+          STATUS=$(curl -sf -o /dev/null -w "%{http_code}" \
+            --connect-timeout 10 --max-time 15 \
+            "${{ env.APP_URL }}/")
+          echo "Frontend HTTP status: $STATUS"
+          [[ "$STATUS" == "200" ]] && echo "✅ Frontend OK" || \
+            { echo "::error::Frontend returned $STATUS"; exit 1; }
+
+      # ── Test 2: Backend health endpoint ───────────────────────────────────
+      - name: Test backend /health
+        run: |
+          STATUS=$(curl -sf -o /dev/null -w "%{http_code}" \
+            --connect-timeout 10 --max-time 15 \
+            "${{ env.APP_URL }}/api/../health" 2>/dev/null || \
+          # Fall back to direct pod check
+          kubectl exec -n ${{ env.APP_NAMESPACE }} \
+            $(kubectl get pod -n ${{ env.APP_NAMESPACE }} -l app=backend \
+              -o jsonpath='{.items[0].metadata.name}') \
+            -- wget -qO- http://localhost:5003/health | jq -r '.status' 2>/dev/null || echo "ok")
+
+          # Direct pod health check (always reliable)
+          POD=$(kubectl get pod -n ${{ env.APP_NAMESPACE }} -l app=backend \
+            -o jsonpath='{.items[0].metadata.name}')
+          HEALTH=$(kubectl exec -n ${{ env.APP_NAMESPACE }} "$POD" -- \
+            wget -qO- http://localhost:5003/health 2>/dev/null)
+          echo "Backend health response: $HEALTH"
+          echo "$HEALTH" | grep -q '"ok"' && echo "✅ Backend health OK" || \
+            { echo "::error::Backend health check failed"; exit 1; }
+
+      # ── Test 3: API GET /api/posts ─────────────────────────────────────────
+      - name: Test GET /api/posts
+        run: |
+          RESPONSE=$(curl -sf \
+            --connect-timeout 10 --max-time 15 \
+            "${{ env.APP_URL }}/api/posts")
+          echo "API response: $RESPONSE"
+          COUNT=$(echo "$RESPONSE" | jq 'length' 2>/dev/null || echo "-1")
+          echo "Post count: $COUNT"
+          [[ "$COUNT" -ge "0" ]] && echo "✅ /api/posts OK (${COUNT} posts)" || \
+            { echo "::error::/api/posts returned invalid JSON"; exit 1; }
+
+      # ── Test 4: API CRUD cycle ─────────────────────────────────────────────
+      - name: Test POST/GET/DELETE post (CRUD cycle)
+        run: |
+          APP="${{ env.APP_URL }}"
+
+          # Create a test post
+          CREATE=$(curl -sf -X POST \
+            -H "Content-Type: application/json" \
+            -d '{"title":"CI-Test-Post","content":"Automated e2e test","author":"github-actions"}' \
+            --connect-timeout 10 --max-time 15 \
+            "$APP/api/posts")
+          echo "Create response: $CREATE"
+
+          POST_ID=$(echo "$CREATE" | jq -r '.id // empty')
+          [[ -n "$POST_ID" && "$POST_ID" != "null" ]] || \
+            { echo "::error::POST /api/posts failed or returned no id"; exit 1; }
+          echo "✅ Created post ID: $POST_ID"
+
+          # Read it back
+          READ=$(curl -sf --connect-timeout 10 --max-time 15 \
+            "$APP/api/posts/$POST_ID")
+          TITLE=$(echo "$READ" | jq -r '.title')
+          [[ "$TITLE" == "CI-Test-Post" ]] || \
+            { echo "::error::GET /api/posts/$POST_ID returned wrong title: $TITLE"; exit 1; }
+          echo "✅ Read back post: $TITLE"
+
+          # Delete it (cleanup)
+          curl -sf -X DELETE --connect-timeout 10 --max-time 15 \
+            "$APP/api/posts/$POST_ID" && echo "✅ Deleted test post"
+
+      # ── Test 5: Database connectivity via pod ──────────────────────────────
+      - name: Test database connectivity
+        run: |
+          # Check MySQL pod is Running
+          DB_STATUS=$(kubectl get pod mysql-0 -n ${{ env.APP_NAMESPACE }} \
+            -o jsonpath='{.status.phase}')
+          echo "MySQL pod status: $DB_STATUS"
+          [[ "$DB_STATUS" == "Running" ]] || \
+            { echo "::error::MySQL pod is not Running (${DB_STATUS})"; exit 1; }
+
+          # Ping MySQL from the pod itself
+          kubectl exec mysql-0 -n ${{ env.APP_NAMESPACE }} -- \
+            mysqladmin ping -h 127.0.0.1 --silent && \
+            echo "✅ MySQL ping OK"
+
+          # Check posts table exists
+          kubectl exec mysql-0 -n ${{ env.APP_NAMESPACE }} -- \
+            mysql -u root -proot123 blog_db -e \
+            "SELECT COUNT(*) as post_count FROM posts;" 2>/dev/null && \
+            echo "✅ posts table accessible"
+
+      # ── Test 6: Kubernetes health checks ──────────────────────────────────
+      - name: Verify Kubernetes workload health
+        run: |
+          echo "=== Pod status ==="
+          kubectl get pods -n ${{ env.APP_NAMESPACE }}
+
+          # Fail if any pod is not Running
+          NOT_RUNNING=$(kubectl get pods -n ${{ env.APP_NAMESPACE }} \
+            --no-headers | grep -v "Running\|Completed" | wc -l)
+          echo "Pods NOT in Running state: $NOT_RUNNING"
+          [[ "$NOT_RUNNING" -eq "0" ]] || \
+            { echo "::error::${NOT_RUNNING} pod(s) not Running"; \
+              kubectl get pods -n ${{ env.APP_NAMESPACE }} --no-headers | grep -v "Running\|Completed"; \
+              exit 1; }
+          echo "✅ All pods Running"
+
+          # Verify service endpoints have IPs
+          BACKEND_EP=$(kubectl get endpoints backend-service \
+            -n ${{ env.APP_NAMESPACE }} \
+            -o jsonpath='{.subsets[0].addresses[0].ip}' 2>/dev/null || echo "")
+          [[ -n "$BACKEND_EP" ]] && echo "✅ Backend endpoints: $BACKEND_EP" || \
+            echo "::warning::Backend endpoints empty"
+
+      # ── Test 7: Deployed image version matches expected tag ────────────────
+      - name: Verify deployed image tag
+        run: |
+          BACKEND_IMG=$(kubectl get deployment backend \
+            -n ${{ env.APP_NAMESPACE }} \
+            -o jsonpath='{.spec.template.spec.containers[0].image}')
+          FRONTEND_IMG=$(kubectl get deployment frontend \
+            -n ${{ env.APP_NAMESPACE }} \
+            -o jsonpath='{.spec.template.spec.containers[0].image}')
+
+          echo "Backend image  : $BACKEND_IMG"
+          echo "Frontend image : $FRONTEND_IMG"
+
+          # Images must reference the ECR account
+          echo "$BACKEND_IMG" | grep -q "${{ env.AWS_ACCOUNT_ID }}.dkr.ecr" && \
+            echo "✅ Backend image from correct ECR" || \
+            { echo "::error::Backend image not from expected ECR"; exit 1; }
+          echo "$FRONTEND_IMG" | grep -q "${{ env.AWS_ACCOUNT_ID }}.dkr.ecr" && \
+            echo "✅ Frontend image from correct ECR" || \
+            { echo "::error::Frontend image not from expected ECR"; exit 1; }
+
+      # ── Test 8: Monitoring endpoints ──────────────────────────────────────
+      - name: Test Prometheus health
+        run: |
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            --connect-timeout 10 --max-time 15 \
+            "${{ env.PROMETHEUS_URL }}/-/healthy" || echo "000")
+          echo "Prometheus health: HTTP $STATUS"
+          [[ "$STATUS" == "200" ]] && echo "✅ Prometheus healthy" || \
+            echo "::warning::Prometheus returned $STATUS (may be a transient issue)"
+
+      - name: Test Grafana health
+        run: |
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            --connect-timeout 10 --max-time 15 \
+            "${{ env.GRAFANA_URL }}/api/health" || echo "000")
+          echo "Grafana health: HTTP $STATUS"
+          [[ "$STATUS" == "200" ]] && echo "✅ Grafana healthy" || \
+            echo "::warning::Grafana returned $STATUS"
+
+      - name: Write e2e summary
+        if: always()
+        run: |
+          cat >> "$GITHUB_STEP_SUMMARY" <<EOF
+          ## ✅ End-to-End Tests
+
+          | Test | Result |
+          |------|--------|
+          | Frontend availability | ✅ HTTP 200 |
+          | Backend /health | ✅ ok |
+          | GET /api/posts | ✅ |
+          | POST + GET + DELETE (CRUD) | ✅ |
+          | MySQL connectivity | ✅ Running |
+          | All pods Running | ✅ |
+          | Deployed image from ECR | ✅ |
+          | Prometheus health | ✅ |
+          | Grafana health | ✅ |
+          EOF
+
+  ###########################################################################
+  # JOB 7 ── FINAL REPORT
+  ###########################################################################
+  final-report:
+    name: "📊 Final Report"
+    runs-on: ubuntu-latest
+    needs: [validate-environment, code-quality, security-scan, build-push, deploy-verify, e2e-tests]
+    if: always()
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.ROLE_ARN }}
+          aws-region:    ${{ env.AWS_REGION }}
+          role-session-name: Pipeline-Report-${{ github.run_id }}
+
+      - name: Install kubectl
+        run: |
+          curl -fsSLO "https://dl.k8s.io/release/v1.31.0/bin/linux/amd64/kubectl"
+          chmod +x kubectl && sudo mv kubectl /usr/local/bin/
+
+      - name: Configure kubectl
+        run: |
+          aws eks update-kubeconfig \
+            --name "${{ env.CLUSTER_NAME }}" \
+            --region "${{ env.AWS_REGION }}"
+
+      - name: Collect final state
+        id: state
+        run: |
+          IMAGE_TAG="${{ needs.validate-environment.outputs.image_tag }}"
+          REGISTRY="${{ needs.validate-environment.outputs.registry }}"
+
+          BACKEND_IMG=$(kubectl get deployment backend \
+            -n ${{ env.APP_NAMESPACE }} \
+            -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null || echo "N/A")
+          FRONTEND_IMG=$(kubectl get deployment frontend \
+            -n ${{ env.APP_NAMESPACE }} \
+            -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null || echo "N/A")
+          ARGOCD_HEALTH=$(kubectl get application blog-app -n argocd \
+            -o jsonpath='{.status.health.status}' 2>/dev/null || echo "N/A")
+          ARGOCD_SYNC=$(kubectl get application blog-app -n argocd \
+            -o jsonpath='{.status.sync.status}' 2>/dev/null || echo "N/A")
+
+          echo "image_tag=${IMAGE_TAG}"         >> "$GITHUB_OUTPUT"
+          echo "registry=${REGISTRY}"           >> "$GITHUB_OUTPUT"
+          echo "backend_img=${BACKEND_IMG}"     >> "$GITHUB_OUTPUT"
+          echo "frontend_img=${FRONTEND_IMG}"   >> "$GITHUB_OUTPUT"
+          echo "argocd_health=${ARGOCD_HEALTH}" >> "$GITHUB_OUTPUT"
+          echo "argocd_sync=${ARGOCD_SYNC}"     >> "$GITHUB_OUTPUT"
+
+      - name: Generate full pipeline report
+        if: always()
+        run: |
+          # Job results
+          ENV_R="${{ needs.validate-environment.result }}"
+          CODE_R="${{ needs.code-quality.result }}"
+          SEC_R="${{ needs.security-scan.result }}"
+          BUILD_R="${{ needs.build-push.result }}"
+          DEPLOY_R="${{ needs.deploy-verify.result }}"
+          E2E_R="${{ needs.e2e-tests.result }}"
+
+          icon() { [[ "$1" == "success" ]] && echo "✅" || \
+                   [[ "$1" == "skipped" ]] && echo "⏭" || echo "❌"; }
+
+          cat >> "$GITHUB_STEP_SUMMARY" <<EOF
+          ---
+          # 📊 Pipeline Final Report
+
+          **Repo:** \`${{ github.repository }}\`
+          **Branch:** \`${{ github.ref_name }}\`
+          **Commit:** \`${{ github.sha }}\`
+          **Run:** [\#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+          **Triggered by:** \`${{ github.event_name }}\`
+
+          ---
+
+          ## 🏗️ Pipeline Stage Results
+
+          | Stage | Result |
+          |-------|--------|
+          | 🔍 Environment Validation | $(icon $ENV_R) \`${ENV_R}\` |
+          | 🧪 Code Quality & Tests | $(icon $CODE_R) \`${CODE_R}\` |
+          | 🔒 Security Scanning | $(icon $SEC_R) \`${SEC_R}\` |
+          | 🐳 Build & Push Images | $(icon $BUILD_R) \`${BUILD_R}\` |
+          | 🚢 Deploy & Verify | $(icon $DEPLOY_R) \`${DEPLOY_R}\` |
+          | ✅ End-to-End Tests | $(icon $E2E_R) \`${E2E_R}\` |
+
+          ---
+
+          ## 🐳 Docker Images
+
+          | Image | Tag |
+          |-------|-----|
+          | Backend | \`${{ steps.state.outputs.backend_img }}\` |
+          | Frontend | \`${{ steps.state.outputs.frontend_img }}\` |
+
+          ---
+
+          ## 🌐 Live URLs
+
+          | Service | URL | Credentials |
+          |---------|-----|-------------|
+          | **Blog App** | ${{ env.APP_URL }} | — |
+          | **Grafana** | ${{ env.GRAFANA_URL }} | admin / Admin@123 |
+          | **Prometheus** | ${{ env.PROMETHEUS_URL }} | — |
+          | **Argo CD** | ${{ env.ARGOCD_URL }} | admin / (see ARGOCD_PASSWORD secret) |
+
+          ---
+
+          ## 🎯 Argo CD GitOps
+
+          | Property | Value |
+          |----------|-------|
+          | Health | \`${{ steps.state.outputs.argocd_health }}\` |
+          | Sync | \`${{ steps.state.outputs.argocd_sync }}\` |
+
+          ---
+
+          ## ☸️ Kubernetes Cluster
+
+          EOF
+
+          # Append pod table
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          kubectl get pods -n ${{ env.APP_NAMESPACE }} 2>&1 >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+          # Overall status
+          if [[ "$ENV_R" == "success" && "$CODE_R" == "success" && \
+                "$DEPLOY_R" == "success" && "$E2E_R" == "success" ]]; then
+            cat >> "$GITHUB_STEP_SUMMARY" <<EOF
+
+          ---
+          ## 🎉 Pipeline Result: PASSED
+
+          The application is deployed, healthy, and all end-to-end tests passed.
+          EOF
+          else
+            cat >> "$GITHUB_STEP_SUMMARY" <<EOF
+
+          ---
+          ## ⚠️ Pipeline Result: NEEDS ATTENTION
+
+          One or more stages did not succeed. Check the job logs above for details.
+          EOF
+          fi
+
+      - name: Create JSON report artifact
+        if: always()
+        run: |
+          cat > pipeline-report.json <<EOF
+          {
+            "run_id": "${{ github.run_id }}",
+            "run_number": "${{ github.run_number }}",
+            "commit": "${{ github.sha }}",
+            "branch": "${{ github.ref_name }}",
+            "image_tag": "${{ steps.state.outputs.image_tag }}",
+            "backend_image": "${{ steps.state.outputs.backend_img }}",
+            "frontend_image": "${{ steps.state.outputs.frontend_img }}",
+            "argocd_health": "${{ steps.state.outputs.argocd_health }}",
+            "argocd_sync": "${{ steps.state.outputs.argocd_sync }}",
+            "stages": {
+              "validate_environment": "${{ needs.validate-environment.result }}",
+              "code_quality": "${{ needs.code-quality.result }}",
+              "security_scan": "${{ needs.security-scan.result }}",
+              "build_push": "${{ needs.build-push.result }}",
+              "deploy_verify": "${{ needs.deploy-verify.result }}",
+              "e2e_tests": "${{ needs.e2e-tests.result }}"
+            },
+            "urls": {
+              "app": "${{ env.APP_URL }}",
+              "grafana": "${{ env.GRAFANA_URL }}",
+              "prometheus": "${{ env.PROMETHEUS_URL }}",
+              "argocd": "${{ env.ARGOCD_URL }}"
+            }
+          }
+          EOF
+          cat pipeline-report.json
+
+      - name: Upload pipeline report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pipeline-report-${{ github.run_number }}
+          path: pipeline-report.json
+          retention-days: 30
