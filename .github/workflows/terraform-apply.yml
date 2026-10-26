@@ -56,4 +56,4 @@ jobs:
 
       - name: Terraform Apply
         if: ${{ github.event.inputs.auto_approve == 'true' }}
-        run: terraform apply -auto-approve tfplan
+        run: terraform apply -lock=false -auto-approve tfplan
