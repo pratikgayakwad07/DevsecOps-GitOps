@@ -65,9 +65,4 @@ app.get('/health', (req, res) => {
 });
 
 const port = process.env.PORT || 5003;
-// Only start listening when run directly — not when required by tests
-if (require.main === module) {
-  app.listen(port, () => console.log(`Server running on port ${port}`));
-}
-
-module.exports = app;
+app.listen(port, () => console.log(`Server running on port ${port}`));
