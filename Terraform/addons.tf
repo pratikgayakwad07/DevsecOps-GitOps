@@ -48,57 +48,53 @@ resource "helm_release" "argocd" {
   depends_on = [module.eks]
 }
 
-# 3. Argo CD Application for GitOps Blog App (via official argocd-apps Helm chart)
-resource "helm_release" "argocd_apps" {
-  count      = var.enable_gitops_addons ? 1 : 0
-  name       = "blog-app"
-  repository = "https://argoproj.github.io/argo-helm"
-  chart      = "argocd-apps"
-  version    = "2.0.2"
-  namespace  = "argocd"
+# 3. Argo CD Application for GitOps Blog App (direct kubernetes_manifest - avoids argocd-apps chart bug)
+resource "kubernetes_manifest" "argocd_application" {
+  count = var.enable_gitops_addons ? 1 : 0
 
-  values = [
-    yamlencode({
-      applications = [
-        {
-          name      = "blog-app"
-          namespace = "argocd"
-          project   = "default"
-          source = {
-            repoURL        = "https://github.com/pratikgayakwad07/DevsecOps-GitOps.git"
-            targetRevision = "HEAD"
-            path           = "Kubernetes"
-            directory = {
-              recurse = true
-            }
-          }
-          destination = {
-            server    = "https://kubernetes.default.svc"
-            namespace = "blog-app"
-          }
-          syncPolicy = {
-            automated = {
-              prune    = true
-              selfHeal = true
-            }
-            syncOptions = [
-              "CreateNamespace=true",
-              "PrunePropagationPolicy=foreground",
-              "RespectIgnoreDifferences=true"
-            ]
-            retry = {
-              limit = 5
-              backoff = {
-                duration    = "5s"
-                factor      = 2
-                maxDuration = "3m"
-              }
-            }
+  manifest = {
+    apiVersion = "argoproj.io/v1alpha1"
+    kind       = "Application"
+    metadata = {
+      name       = "blog-app"
+      namespace  = "argocd"
+      finalizers = ["resources-finalizer.argocd.argoproj.io"]
+    }
+    spec = {
+      project = "default"
+      source = {
+        repoURL        = "https://github.com/pratikgayakwad07/DevsecOps-GitOps.git"
+        targetRevision = "HEAD"
+        path           = "Kubernetes"
+        directory = {
+          recurse = true
+        }
+      }
+      destination = {
+        server    = "https://kubernetes.default.svc"
+        namespace = "blog-app"
+      }
+      syncPolicy = {
+        automated = {
+          prune    = true
+          selfHeal = true
+        }
+        syncOptions = [
+          "CreateNamespace=true",
+          "PrunePropagationPolicy=foreground",
+          "RespectIgnoreDifferences=true"
+        ]
+        retry = {
+          limit = 5
+          backoff = {
+            duration    = "5s"
+            factor      = 2
+            maxDuration = "3m"
           }
         }
-      ]
-    })
-  ]
+      }
+    }
+  }
 
   depends_on = [helm_release.argocd]
 }

@@ -25,9 +25,9 @@ module "eks" {
   }
 
   cluster_addons = {
-    aws-ebs-csi-driver = {
-      most_recent = true
-    }
+    # aws-ebs-csi-driver = {
+    #   most_recent = true
+    # }
   }
 
   vpc_id = var.vpc_id
@@ -73,5 +73,4 @@ module "eks" {
 
     Project = "Simple-Blog-App"
   }
-
 }
