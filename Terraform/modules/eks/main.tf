@@ -53,7 +53,7 @@ module "eks" {
       max_size     = 6
       instance_types = [var.instance_type]
       capacity_type = "ON_DEMAND"
-      disk_size = 80
+      disk_size = 100
 
       labels = {
         Environment = var.environment

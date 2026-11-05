@@ -45,3 +45,4 @@ jobs:
         env:
           CLUSTER_NAME: ${{ github.event.inputs.cluster_name }}
           AWS_REGION: ${{ github.event.inputs.aws_region }}
+

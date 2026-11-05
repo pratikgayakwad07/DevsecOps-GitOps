@@ -48,58 +48,57 @@ resource "helm_release" "argocd" {
   depends_on = [module.eks]
 }
 
-# 3. Argo CD Application for GitOps Blog App
-resource "kubernetes_manifest" "argocd_application" {
-  count = var.enable_gitops_addons ? 1 : 0
+# 3. Argo CD Application for GitOps Blog App (via official argocd-apps Helm chart)
+resource "helm_release" "argocd_apps" {
+  count      = var.enable_gitops_addons ? 1 : 0
+  name       = "blog-app"
+  repository = "https://argoproj.github.io/argo-helm"
+  chart      = "argocd-apps"
+  version    = "2.0.2"
+  namespace  = "argocd"
 
-  manifest = {
-    apiVersion = "argoproj.io/v1alpha1"
-    kind       = "Application"
-    metadata = {
-      name      = "blog-app"
-      namespace = "argocd"
-      finalizers = [
-        "resources-finalizer.argocd.argoproj.io"
-      ]
-      annotations = {
-        "argocd.argoproj.io/refresh" = "3m"
-      }
-    }
-    spec = {
-      project = "default"
-      source = {
-        repoURL        = "https://github.com/pratikgayakwad07/DevsecOps-GitOps.git"
-        targetRevision = "HEAD"
-        path           = "Kubernetes"
-        directory = {
-          recurse = true
-        }
-      }
-      destination = {
-        server    = "https://kubernetes.default.svc"
-        namespace = "blog-app"
-      }
-      syncPolicy = {
-        automated = {
-          prune    = true
-          selfHeal = true
-        }
-        syncOptions = [
-          "CreateNamespace=true",
-          "PrunePropagationPolicy=foreground",
-          "RespectIgnoreDifferences=true"
-        ]
-        retry = {
-          limit = 5
-          backoff = {
-            duration    = "5s"
-            factor      = 2
-            maxDuration = "3m"
+  values = [
+    yamlencode({
+      applications = [
+        {
+          name      = "blog-app"
+          namespace = "argocd"
+          project   = "default"
+          source = {
+            repoURL        = "https://github.com/pratikgayakwad07/DevsecOps-GitOps.git"
+            targetRevision = "HEAD"
+            path           = "Kubernetes"
+            directory = {
+              recurse = true
+            }
+          }
+          destination = {
+            server    = "https://kubernetes.default.svc"
+            namespace = "blog-app"
+          }
+          syncPolicy = {
+            automated = {
+              prune    = true
+              selfHeal = true
+            }
+            syncOptions = [
+              "CreateNamespace=true",
+              "PrunePropagationPolicy=foreground",
+              "RespectIgnoreDifferences=true"
+            ]
+            retry = {
+              limit = 5
+              backoff = {
+                duration    = "5s"
+                factor      = 2
+                maxDuration = "3m"
+              }
+            }
           }
         }
-      }
-    }
-  }
+      ]
+    })
+  ]
 
   depends_on = [helm_release.argocd]
 }

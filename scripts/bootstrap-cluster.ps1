@@ -72,3 +72,4 @@ helm upgrade --install prometheus prometheus-community/kube-prometheus-stack `
 Write-Host "============================================================" -ForegroundColor Green
 Write-Host " Full Bootstrap Complete!" -ForegroundColor Green
 Write-Host "============================================================" -ForegroundColor Green
+

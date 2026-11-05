@@ -128,3 +128,4 @@ echo "URL: $(kubectl get svc prometheus-grafana -n monitoring -o jsonpath='{.sta
 echo "Username: admin"
 echo "Password: Admin@123"
 echo "============================================================"
+
