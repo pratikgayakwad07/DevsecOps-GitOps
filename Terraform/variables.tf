@@ -57,3 +57,9 @@ variable "cluster_version" {
   description = "Version of the EKS cluster"
   type        = string
 }
+
+variable "enable_gitops_addons" {
+  description = "Whether to deploy ArgoCD, StorageClass, and Monitoring addons via Terraform Helm releases"
+  type        = bool
+  default     = true
+}

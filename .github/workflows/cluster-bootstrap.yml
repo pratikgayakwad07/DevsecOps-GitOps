@@ -1,0 +1,47 @@
+name: "EKS Cluster Bootstrap & Tooling"
+
+on:
+  workflow_dispatch:
+    inputs:
+      cluster_name:
+        description: "Name of the EKS cluster"
+        required: true
+        default: "blog-prod-eks"
+      aws_region:
+        description: "AWS Region"
+        required: true
+        default: "us-east-1"
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  bootstrap:
+    name: "Bootstrap ArgoCD & Monitoring"
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: "arn:aws:iam::122384809512:role/github-actions-blog-app-role"
+          aws-region: ${{ github.event.inputs.aws_region }}
+          role-session-name: GitHubActions-Bootstrap-${{ github.run_id }}
+
+      - name: Setup Kubectl
+        uses: azure/setup-kubectl@v4
+
+      - name: Setup Helm
+        uses: azure/setup-helm@v4
+
+      - name: Run Full Bootstrap Script
+        run: |
+          chmod +x scripts/bootstrap-cluster.sh
+          ./scripts/bootstrap-cluster.sh
+        env:
+          CLUSTER_NAME: ${{ github.event.inputs.cluster_name }}
+          AWS_REGION: ${{ github.event.inputs.aws_region }}

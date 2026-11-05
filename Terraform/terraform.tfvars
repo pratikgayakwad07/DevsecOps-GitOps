@@ -21,5 +21,5 @@ cluster_name       = "blog-prod-eks"
 cluster_version    = "1.31"
 instance_type      = "t3.large"
 
-# ECR repository name (optional – used in the ecr module if you expose it later)
-# ecr_repository_name = "blog-app-ecr"
+# Enable fully automated addons (StorageClass gp3, ArgoCD, Monitoring)
+enable_gitops_addons = true

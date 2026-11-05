@@ -29,18 +29,26 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      # OIDC authentication — no static credentials
+      # OIDC authentication
       - name: Configure AWS Credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ secrets.AWS_REGION }}
-          
+
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Setup Helm
+        if: ${{ github.event.inputs.auto_approve == 'true' }}
+        uses: azure/setup-helm@v4
+
+      - name: Setup Kubectl
+        if: ${{ github.event.inputs.auto_approve == 'true' }}
+        uses: azure/setup-kubectl@v4
 
       - name: Terraform Format Check
         run: terraform fmt -check || true
@@ -57,3 +65,12 @@ jobs:
       - name: Terraform Apply
         if: ${{ github.event.inputs.auto_approve == 'true' }}
         run: terraform apply -lock=false -auto-approve tfplan
+
+      - name: Bootstrap EKS Cluster Addons (Option 2 Automation)
+        if: ${{ github.event.inputs.auto_approve == 'true' }}
+        run: |
+          chmod +x ../scripts/bootstrap-cluster.sh
+          ../scripts/bootstrap-cluster.sh
+        env:
+          CLUSTER_NAME: "blog-prod-eks"
+          AWS_REGION: ${{ env.AWS_REGION }}
