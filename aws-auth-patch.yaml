@@ -5,7 +5,7 @@ metadata:
   namespace: kube-system
 data:
   mapRoles: |
-    - rolearn: arn:aws:iam::122384809512:role/blog_nodes-eks-node-group-20261026063318300700000001
+    - rolearn: arn:aws:iam::122384809512:role/blog_nodes-eks-node-group-20261105062005088600000003
       groups:
       - system:bootstrappers
       - system:nodes

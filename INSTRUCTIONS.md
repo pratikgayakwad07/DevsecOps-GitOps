@@ -267,12 +267,24 @@ kubectl wait --for=condition=available deployment/argocd-server \
 kubectl patch svc argocd-server -n argocd \
   --type=merge --patch-file <(echo '{"spec":{"type":"LoadBalancer"}}')
 
+## powershell windows
+kubectl patch svc argocd-server -n argocd --type merge --patch '{\"spec\":{\"type\":\"LoadBalancer\"}}'
+
 # Apply the blog-app Application
 kubectl apply -f argocd/application.yaml
 
-# Get admin password
+# Get admin password 
+## linux/macos
 kubectl get secret argocd-initial-admin-secret -n argocd \
   -o jsonpath='{.data.password}' | base64 -d && echo
+
+## PowerShell (Windows)
+  [System.Text.Encoding]::UTF8.GetString(
+    [System.Convert]::FromBase64String(
+        (kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}")
+    )
+)
+
 ```
 
 ### 6c. Install Prometheus + Grafana

@@ -10,6 +10,26 @@ module "eks" {
 
   enable_cluster_creator_admin_permissions = true
 
+  access_entries = {
+    github_actions = {
+      principal_arn = "arn:aws:iam::122384809512:role/github-actions-blog-app-role"
+      policy_associations = {
+        admin = {
+          policy_arn = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
+          access_scope = {
+            type = "cluster"
+          }
+        }
+      }
+    }
+  }
+
+  cluster_addons = {
+    aws-ebs-csi-driver = {
+      most_recent = true
+    }
+  }
+
   vpc_id = var.vpc_id
 
   subnet_ids = var.private_subnets
@@ -29,8 +49,8 @@ module "eks" {
     blog_nodes = {
 
       desired_size = 5
-      min_size = 4
-      max_size = 6
+      min_size     = 4
+      max_size     = 6
       instance_types = [var.instance_type]
       capacity_type = "ON_DEMAND"
       disk_size = 80
