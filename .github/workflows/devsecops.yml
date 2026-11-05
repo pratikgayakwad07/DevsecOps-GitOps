@@ -156,7 +156,7 @@ jobs:
   # -----------------------------------------------------------------------
   build-and-push:
     name: Build, Push to ECR & Update GitOps
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'push'
     needs: [code-checks, secret-scanning, dependency-scan, container-security]
     runs-on: ubuntu-latest
     outputs:
